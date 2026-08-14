@@ -24,7 +24,7 @@ const ctx = canvas.getContext('2d');
 
 // ===== 2. STATE =====
 const state = {
-  screen: 'play',      // 'start' | 'play' | 'win'
+  screen: 'start',      // 'start' | 'play' | 'win'
   levelIndex: 0,
   hearts: 3,
   score: 0,
@@ -38,6 +38,7 @@ function loadLevel(i){
   state.activeCheckpoint = { ...L.start };
   player.x = L.start.x; player.y = L.start.y; player.vx = 0; player.vy = 0;
   CONFIG.GROUND_Y = L.groundY;
+  state.introTimer = 2;
 }
 
 // ===== 3. LEVELS =====
@@ -152,7 +153,7 @@ loadLevel(0);
 // ===== 9. INPUT =====
 const keys = new Set();
 addEventListener('keydown', e => {
-  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','KeyA','KeyD','KeyW','KeyS','KeyF'].includes(e.code)) e.preventDefault();
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','KeyA','KeyD','KeyW','KeyS','KeyF','Enter'].includes(e.code)) e.preventDefault();
   keys.add(e.code);
 });
 addEventListener('keyup', e => keys.delete(e.code));
@@ -309,7 +310,16 @@ function drawPlayer(sx, sy){
   }
   ctx.restore();
 }
+function centerText(lines, colorTitle){
+  ctx.fillStyle='#10131f'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+  ctx.textAlign='center';
+  lines.forEach((l,i)=>{ ctx.fillStyle = i===0?colorTitle:'#e8e8e8'; ctx.font = (i===0?'54px':'26px')+' serif'; ctx.fillText(l, CONFIG.W/2, 180 + i*56); });
+}
+function renderStart(){ centerText(['🥦 Broccoli-Quest','5 Levels · 5 Kostüme · 5 Waffen','←/→ laufen · Leertaste springen · F Waffe','[Enter] zum Starten'], '#3fa34d'); }
+function renderWin(){ centerText(['🏆 Geschafft!','Broccoli hat alle 5 Levels gemeistert!','Punkte: '+state.score,'[Enter] zurück zum Start'], '#ffd23f'); }
 function render(){
+  if(state.screen==='start'){ return renderStart(); }
+  if(state.screen==='win'){ return renderWin(); }
   const L = currentLevel();
   ctx.clearRect(0,0,CONFIG.W,CONFIG.H);
   ctx.fillStyle = L.bg; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
@@ -348,6 +358,10 @@ function render(){
   ctx.fillText('❤️'.repeat(state.hearts), 16, 34);
   ctx.fillText('🌟 ' + state.score, 16, 64);
   ctx.fillText(L.name, CONFIG.W-220, 34);
+  if(state.introTimer>0){ ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+    ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='40px serif';
+    ctx.fillText('Level '+(state.levelIndex+1)+': '+L.name, CONFIG.W/2, 240);
+    ctx.font='30px serif'; ctx.fillText(costume().emoji+' Kostüm bereit!', CONFIG.W/2, 300); }
 }
 
 // ===== 11. LOOP =====
@@ -360,8 +374,11 @@ function loop(ts){
   requestAnimationFrame(loop);
 }
 function update(dt){
+  if(state.screen === 'start'){ if(keys.has('Enter')||keys.has('Space')){ loadLevel(0); state.screen='play'; } return; }
+  if(state.screen === 'win'){ if(keys.has('Enter')){ state.screen='start'; } return; }
   if(state.screen !== 'play') return;
   const L = currentLevel();
+  if(state.introTimer>0) state.introTimer -= dt;
   movePlayer(dt);
   player.cooldown = Math.max(0, (player.cooldown||0) - dt);
   if(keys.has('KeyF')) fireWeapon();
