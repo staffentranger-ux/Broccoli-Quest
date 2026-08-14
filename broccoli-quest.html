@@ -53,7 +53,10 @@ const LEVELS = [
       {x:1250,y:380, w:150, h:20},
     ],
     hazards: [],           // Task 4 füllt Löcher/Spikes-Logik; Löcher entstehen durch Plattform-Lücken
-    enemies: [],           // Task 5
+    enemies: [
+      {x:500, y:452, w:30, h:28, type:'walker', emoji:'🐌', dir:1, speed:60, range:120, baseX:500, alive:true},
+      {x:1300,y:452, w:30, h:28, type:'walker', emoji:'🐛', dir:-1, speed:80, range:150, baseX:1300, alive:true},
+    ],           // Task 5
     stars:   [{x:400,y:340},{x:660,y:260},{x:1300,y:330}],
     checkpoints: [{x:1000,y:436}],
     start: {x:60, y:420}, goalX: 2500,
@@ -119,6 +122,21 @@ function hurt(){
   else { respawn(); }
 }
 
+// ===== 6. ENEMIES =====
+function updateEnemies(dt){
+  const L = currentLevel();
+  for(const e of L.enemies){
+    if(!e.alive) continue;
+    if(e.type === 'walker'){
+      e.x += e.dir * e.speed * dt;
+      if(e.x > e.baseX + e.range) e.dir = -1;
+      if(e.x < e.baseX - e.range) e.dir = 1;
+    }
+    // Kollision mit Player = Schaden
+    if(aabb(player, e)) hurt();
+  }
+}
+
 // ===== 10. RENDER =====
 function render(){
   const L = currentLevel();
@@ -140,6 +158,9 @@ function render(){
   for(const s of L.stars) ctx.fillText('🌟', s.x - cx + 14, s.y + 24);
   // Ziel
   ctx.font = '40px serif'; ctx.fillText('🏁', L.goalX - cx, L.groundY);
+  // Gegner
+  ctx.font = '30px serif'; ctx.textAlign='center';
+  for(const e of L.enemies){ if(e.alive) ctx.fillText(e.emoji, e.x - cx + e.w/2, e.y + e.h); }
   // Broccoli
   ctx.font = '44px serif';
   if(invuln > 0 && Math.floor(invuln*10)%2===0){ /* Blink: Broccoli in diesem Frame nicht zeichnen */ }
@@ -179,6 +200,7 @@ function update(dt){
       state.activeCheckpoint = { x:c.x, y:c.y - player.h };
     }
   }
+  updateEnemies(dt);
   // Kamera folgt, geklemmt auf Weltgrenzen
   state.cameraX = Math.max(0, Math.min(player.x + player.w/2 - CONFIG.W/2, L.worldW - CONFIG.W));
   // Sterne einsammeln
