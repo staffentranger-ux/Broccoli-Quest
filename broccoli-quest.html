@@ -63,6 +63,18 @@ const LEVELS = [
   },
 ];
 
+// ===== 4. COSTUMES =====
+// ability: {gravity?, jumpV?, doubleJump?, wallJump?, swim?, fireproof?} — Task 7–10 nutzen Felder
+// weapon:  {emoji, speed, range, cooldown, dmg}  speed=0 => Nahbereich-Strahl
+const COSTUMES = {
+  basis:     { emoji:'🧢', weapon:{emoji:'🧂', speed:520, range:260, cooldown:0.35, dmg:1} },
+  astronaut: { emoji:'🚀', weapon:{emoji:'⚡', speed:700, range:520, cooldown:0.30, dmg:1} },
+  taucher:   { emoji:'🤿', weapon:{emoji:'🫧', speed:480, range:300, cooldown:0.40, dmg:1} },
+  feuerwehr: { emoji:'💦', weapon:{emoji:'💦', speed:0,   range:110, cooldown:0.15, dmg:1} },
+  ninja:     { emoji:'🥷', weapon:{emoji:'⭐', speed:820, range:640, cooldown:0.25, dmg:1} },
+};
+function costume(){ return COSTUMES[currentLevel().costume]; }
+
 // ===== 5. PLAYER (Minimalfassung) =====
 const player = { x: 100, y: 400, w: 34, h: 44, vx: 0, vy: 0, onGround: false, facing: 1 };
 loadLevel(0);
@@ -137,6 +149,30 @@ function updateEnemies(dt){
   }
 }
 
+// ===== 7. PROJECTILES =====
+let projectiles = [];
+function fireWeapon(){
+  if(player.cooldown > 0) return;
+  const w = costume().weapon;
+  player.cooldown = w.cooldown;
+  projectiles.push({
+    x: player.x + (player.facing>0 ? player.w : -10), y: player.y + player.h*0.4,
+    w: 18, h: 14, dir: player.facing, speed: w.speed, dmg: w.dmg,
+    travelled: 0, range: w.range, emoji: w.emoji,
+  });
+}
+function updateProjectiles(dt){
+  const L = currentLevel();
+  for(const pr of projectiles){
+    const step = (pr.speed || 400) * dt;
+    pr.x += pr.dir * step; pr.travelled += step;
+    for(const e of L.enemies){
+      if(e.alive && aabb(pr, e)){ e.alive = false; state.score += 20; pr.dead = true; }
+    }
+  }
+  projectiles = projectiles.filter(pr => !pr.dead && pr.travelled < pr.range);
+}
+
 // ===== 10. RENDER =====
 function render(){
   const L = currentLevel();
@@ -161,6 +197,9 @@ function render(){
   // Gegner
   ctx.font = '30px serif'; ctx.textAlign='center';
   for(const e of L.enemies){ if(e.alive) ctx.fillText(e.emoji, e.x - cx + e.w/2, e.y + e.h); }
+  // Projektile
+  ctx.font = '20px serif';
+  for(const pr of projectiles) ctx.fillText(pr.emoji, pr.x - cx, pr.y + 14);
   // Broccoli
   ctx.font = '44px serif';
   if(invuln > 0 && Math.floor(invuln*10)%2===0){ /* Blink: Broccoli in diesem Frame nicht zeichnen */ }
@@ -191,6 +230,9 @@ function update(dt){
   if(state.screen !== 'play') return;
   const L = currentLevel();
   movePlayer(dt);
+  player.cooldown = Math.max(0, (player.cooldown||0) - dt);
+  if(keys.has('KeyF')) fireWeapon();
+  updateProjectiles(dt);
   if(invuln > 0) invuln -= dt;
   // In Abgrund gefallen?
   if(player.y > L.groundY + 200){ hurt(); }
