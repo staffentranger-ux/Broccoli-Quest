@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Broccoli-Quest</title>
+<style>
+  html,body{margin:0;height:100%;background:#1b1b2b;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;}
+  canvas{background:#87ceeb;image-rendering:pixelated;box-shadow:0 8px 40px rgba(0,0,0,.5);border-radius:8px;}
+</style>
+</head>
+<body>
+<canvas id="game" width="960" height="540"></canvas>
+<script>
+// ===== 1. CONFIG =====
+const CONFIG = {
+  W: 960, H: 540,
+  GRAVITY: 2000,        // px/s^2
+  MOVE_SPEED: 260,      // px/s
+  JUMP_V: 720,          // px/s initiale Sprunggeschwindigkeit
+  GROUND_Y: 480,        // Boden-Oberkante im Tutorial (überschrieben je Level)
+};
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// ===== 2. STATE =====
+const state = {
+  screen: 'play',      // 'start' | 'play' | 'win'
+  levelIndex: 0,
+  hearts: 3,
+  score: 0,
+  cameraX: 0,
+};
+
+// ===== 5. PLAYER (Minimalfassung) =====
+const player = { x: 100, y: 400, w: 34, h: 44, vx: 0, vy: 0, onGround: false, facing: 1 };
+
+// ===== 10. RENDER =====
+function render(){
+  ctx.clearRect(0,0,CONFIG.W,CONFIG.H);
+  // Boden
+  ctx.fillStyle = '#6b4f2a';
+  ctx.fillRect(0, CONFIG.GROUND_Y, CONFIG.W, CONFIG.H - CONFIG.GROUND_Y);
+  ctx.fillStyle = '#3fa34d';
+  ctx.fillRect(0, CONFIG.GROUND_Y, CONFIG.W, 10);
+  // Broccoli (Emoji + Körper)
+  ctx.font = '44px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('🥦', player.x + player.w/2, player.y + player.h);
+}
+
+// ===== 11. LOOP =====
+let last = 0;
+function loop(ts){
+  const dt = Math.min(0.033, (ts - last) / 1000 || 0);
+  last = ts;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+function update(dt){ /* Task 2 füllt dies */ }
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
