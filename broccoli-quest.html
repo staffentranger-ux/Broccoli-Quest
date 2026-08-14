@@ -107,6 +107,18 @@ function movePlayer(dt){
   }
 }
 
+let invuln = 0; // Sekunden Unverwundbarkeit nach Treffer
+function respawn(){
+  const c = state.activeCheckpoint;
+  player.x = c.x; player.y = c.y; player.vx = 0; player.vy = 0;
+}
+function hurt(){
+  if(invuln > 0) return;
+  state.hearts--; invuln = 1.2;
+  if(state.hearts <= 0){ loadLevel(state.levelIndex); } // ganzes Level neu
+  else { respawn(); }
+}
+
 // ===== 10. RENDER =====
 function render(){
   const L = currentLevel();
@@ -130,10 +142,13 @@ function render(){
   ctx.font = '40px serif'; ctx.fillText('🏁', L.goalX - cx, L.groundY);
   // Broccoli
   ctx.font = '44px serif';
+  if(invuln > 0 && Math.floor(invuln*10)%2===0){ /* Blink: Broccoli in diesem Frame nicht zeichnen */ }
+  else {
   ctx.save();
   if(player.facing < 0){ ctx.translate((player.x - cx + player.w/2)*2, 0); ctx.scale(-1,1); }
   ctx.fillText('🥦', player.x - cx + player.w/2, player.y + player.h);
   ctx.restore();
+  }
   // HUD
   ctx.font = '22px serif'; ctx.textAlign='left';
   ctx.fillStyle = '#fff';
@@ -155,6 +170,15 @@ function update(dt){
   if(state.screen !== 'play') return;
   const L = currentLevel();
   movePlayer(dt);
+  if(invuln > 0) invuln -= dt;
+  // In Abgrund gefallen?
+  if(player.y > L.groundY + 200){ hurt(); }
+  // Checkpoint erreichen aktiviert ihn
+  for(const c of L.checkpoints){
+    if(Math.abs(player.x - c.x) < 30 && player.y < L.groundY){
+      state.activeCheckpoint = { x:c.x, y:c.y - player.h };
+    }
+  }
   // Kamera folgt, geklemmt auf Weltgrenzen
   state.cameraX = Math.max(0, Math.min(player.x + player.w/2 - CONFIG.W/2, L.worldW - CONFIG.W));
   // Sterne einsammeln
