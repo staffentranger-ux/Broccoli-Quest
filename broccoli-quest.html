@@ -141,7 +141,7 @@ const COSTUMES = {
   basis:     { emoji:'🧢', ability:{gravityMul:1, jumpMul:1}, weapon:{emoji:'🧂', speed:520, range:260, cooldown:0.35, dmg:1} },
   astronaut: { emoji:'🚀', ability:{gravityMul:0.45, jumpMul:1.15}, weapon:{emoji:'⚡', speed:700, range:520, cooldown:0.30, dmg:1} },
   taucher:   { emoji:'🤿', ability:{swim:true, swimSpeed:200}, weapon:{emoji:'🫧', speed:480, range:300, cooldown:0.40, dmg:1} },
-  feuerwehr: { emoji:'🔥', ability:{gravityMul:1, jumpMul:1}, weapon:{emoji:'💦', speed:0, range:110, cooldown:0.15, dmg:1} },
+  feuerwehr: { emoji:'🔥', ability:{gravityMul:1, jumpMul:1, fireproof:true}, weapon:{emoji:'💦', speed:0, range:110, cooldown:0.15, dmg:1} },
   ninja:     { emoji:'🥷', ability:{doubleJump:true, wallJump:true}, weapon:{emoji:'⭐', speed:820, range:640, cooldown:0.25, dmg:1} },
 };
 function costume(){ return COSTUMES[currentLevel().costume]; }
@@ -207,6 +207,17 @@ function movePlayer(dt){
         player.onGround = true;
       } else {
         player.touchingWall = (player.x < p.x ? -1 : 1);
+      }
+    }
+  }
+  // Feuerwehr: Lava ist begehbare Fläche (nur für feuerfeste Kostüme)
+  if(costume().ability?.fireproof){
+    for(const hz of (currentLevel().hazards||[])){
+      if(hz.type==='lava' && aabb(player, hz)){
+        const prevBottom = (player.y - player.vy*dt) + player.h;
+        if(player.vy > 0 && prevBottom <= hz.y + 1){
+          player.y = hz.y - player.h; player.vy = 0; player.onGround = true;
+        }
       }
     }
   }
@@ -429,7 +440,7 @@ function update(dt){
   }
   updateEnemies(dt);
   for(const hz of (L.hazards||[])){
-    if(hz.type==='lava' && aabb(player, hz)) hurt();
+    if(hz.type==='lava' && !costume().ability?.fireproof && aabb(player, hz)) hurt();
   }
   // Kamera folgt, geklemmt auf Weltgrenzen
   state.cameraX = Math.max(0, Math.min(player.x + player.w/2 - CONFIG.W/2, L.worldW - CONFIG.W));
