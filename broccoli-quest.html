@@ -30,9 +30,39 @@ const state = {
   score: 0,
   cameraX: 0,
 };
+function currentLevel(){ return LEVELS[state.levelIndex]; }
+function loadLevel(i){
+  state.levelIndex = i;
+  const L = LEVELS[i];
+  state.hearts = 3; state.cameraX = 0;
+  state.activeCheckpoint = { ...L.start };
+  player.x = L.start.x; player.y = L.start.y; player.vx = 0; player.vy = 0;
+  CONFIG.GROUND_Y = L.groundY;
+}
+
+// ===== 3. LEVELS =====
+// Jedes Level: {name, costume, worldW, groundY, bg, platforms[], hazards[], enemies[], stars[], checkpoints[], start{x,y}, goalX}
+const LEVELS = [
+  {
+    name: 'Der Garten', costume: 'basis', worldW: 2600, groundY: 480, bg: '#87ceeb',
+    platforms: [
+      {x:0,   y:480, w:900,  h:60},
+      {x:1000,y:480, w:1600, h:60},           // Lücke 900–1000 = Loch
+      {x:340, y:390, w:150, h:20},
+      {x:600, y:310, w:150, h:20},
+      {x:1250,y:380, w:150, h:20},
+    ],
+    hazards: [],           // Task 4 füllt Löcher/Spikes-Logik; Löcher entstehen durch Plattform-Lücken
+    enemies: [],           // Task 5
+    stars:   [{x:400,y:340},{x:660,y:260},{x:1300,y:330}],
+    checkpoints: [{x:1000,y:436}],
+    start: {x:60, y:420}, goalX: 2500,
+  },
+];
 
 // ===== 5. PLAYER (Minimalfassung) =====
 const player = { x: 100, y: 400, w: 34, h: 44, vx: 0, vy: 0, onGround: false, facing: 1 };
+loadLevel(0);
 
 // ===== 9. INPUT =====
 const keys = new Set();
@@ -49,12 +79,6 @@ const jumpPressed = () => keys.has('ArrowUp') || keys.has('KeyW') || keys.has('S
 function aabb(a,b){
   return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
 }
-// temporäre Testplattformen bis Task 3 die Level-Daten liefert
-const platforms = [
-  { x:0, y:CONFIG.GROUND_Y, w:2000, h:60 },
-  { x:300, y:400, w:140, h:20 },
-  { x:520, y:320, w:140, h:20 },
-];
 function movePlayer(dt){
   // horizontal
   player.vx = 0;
@@ -66,7 +90,7 @@ function movePlayer(dt){
   player.y += player.vy * dt;
   // Plattform-Kollision (nur von oben landen)
   player.onGround = false;
-  for(const p of platforms){
+  for(const p of currentLevel().platforms){
     if(aabb(player, p)){
       const prevBottom = (player.y - player.vy*dt) + player.h;
       if(player.vy > 0 && prevBottom <= p.y + 1){
@@ -85,20 +109,37 @@ function movePlayer(dt){
 
 // ===== 10. RENDER =====
 function render(){
+  const L = currentLevel();
   ctx.clearRect(0,0,CONFIG.W,CONFIG.H);
-  // Boden
-  ctx.fillStyle = '#6b4f2a';
-  ctx.fillRect(0, CONFIG.GROUND_Y, CONFIG.W, CONFIG.H - CONFIG.GROUND_Y);
-  ctx.fillStyle = '#3fa34d';
-  ctx.fillRect(0, CONFIG.GROUND_Y, CONFIG.W, 10);
-  // Plattformen
-  ctx.fillStyle = '#8a5a2b';
-  for(const p of platforms){ if(p.y < CONFIG.GROUND_Y) ctx.fillRect(p.x, p.y, p.w, p.h); }
-  // Broccoli (Emoji + Körper)
+  ctx.fillStyle = L.bg; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+  const cx = state.cameraX;
+  // Boden + Plattformen
+  for(const p of L.platforms){
+    ctx.fillStyle = (p.y >= L.groundY) ? '#6b4f2a' : '#8a5a2b';
+    ctx.fillRect(p.x - cx, p.y, p.w, p.h);
+    ctx.fillStyle = '#3fa34d';
+    ctx.fillRect(p.x - cx, p.y, p.w, 8);
+  }
+  // Checkpoints
+  ctx.font = '30px serif'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  for(const c of L.checkpoints) ctx.fillText('🚩', c.x - cx, c.y + 28);
+  // Sterne
+  ctx.font = '26px serif';
+  for(const s of L.stars) ctx.fillText('🌟', s.x - cx + 14, s.y + 24);
+  // Ziel
+  ctx.font = '40px serif'; ctx.fillText('🏁', L.goalX - cx, L.groundY);
+  // Broccoli
   ctx.font = '44px serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillText('🥦', player.x + player.w/2, player.y + player.h);
+  ctx.save();
+  if(player.facing < 0){ ctx.translate((player.x - cx + player.w/2)*2, 0); ctx.scale(-1,1); }
+  ctx.fillText('🥦', player.x - cx + player.w/2, player.y + player.h);
+  ctx.restore();
+  // HUD
+  ctx.font = '22px serif'; ctx.textAlign='left';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('❤️'.repeat(state.hearts), 16, 34);
+  ctx.fillText('🌟 ' + state.score, 16, 64);
+  ctx.fillText(L.name, CONFIG.W-220, 34);
 }
 
 // ===== 11. LOOP =====
@@ -112,7 +153,21 @@ function loop(ts){
 }
 function update(dt){
   if(state.screen !== 'play') return;
+  const L = currentLevel();
   movePlayer(dt);
+  // Kamera folgt, geklemmt auf Weltgrenzen
+  state.cameraX = Math.max(0, Math.min(player.x + player.w/2 - CONFIG.W/2, L.worldW - CONFIG.W));
+  // Sterne einsammeln
+  L.stars = L.stars.filter(s => {
+    if(aabb(player, {x:s.x,y:s.y,w:28,h:28})){ state.score += 10; return false; }
+    return true;
+  });
+  // Ziel erreicht
+  if(player.x >= L.goalX){ nextLevel(); }
+}
+function nextLevel(){
+  if(state.levelIndex + 1 < LEVELS.length){ loadLevel(state.levelIndex + 1); }
+  else { state.screen = 'win'; }
 }
 requestAnimationFrame(loop);
 </script>
