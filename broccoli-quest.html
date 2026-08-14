@@ -110,6 +110,27 @@ const LEVELS = [
     checkpoints: [{x:1600,y:376}],
     start:{x:60,y:440}, goalX:2900,
   },
+  {
+    name: 'Bambus-Tempel', costume: 'ninja', worldW: 3200, groundY: 500, bg: '#123a2a',
+    platforms: [
+      {x:0,y:500,w:400,h:60},
+      {x:560,y:200,w:40,h:300},   // hohe Wand für Wandsprung
+      {x:760,y:380,w:140,h:20},{x:1000,y:280,w:40,h:220},
+      {x:1200,y:360,w:150,h:20},{x:1500,y:260,w:150,h:20},
+      {x:1780,y:200,w:40,h:300},{x:1980,y:340,w:180,h:20},
+      {x:2300,y:440,w:200,h:20},{x:2600,y:500,w:600,h:60},
+    ],
+    hazards: [
+      {x:400,y:540,w:160,h:20,type:'lava'},{x:2500,y:540,w:100,h:20,type:'lava'},
+    ],
+    enemies: [
+      {x:820, y:352, w:30,h:28, type:'walker', emoji:'🦂', dir:1, speed:90, range:80, baseX:820, alive:true},
+      {x:2050,y:312, w:30,h:28, type:'walker', emoji:'🥷', dir:-1,speed:110,range:120, baseX:2050,alive:true},
+    ],
+    stars: [{x:820,y:320},{x:1560,y:200},{x:2360,y:380}],
+    checkpoints: [{x:1500,y:216}],
+    start:{x:60,y:440}, goalX:3100,
+  },
 ];
 
 // ===== 4. COSTUMES =====
@@ -120,7 +141,7 @@ const COSTUMES = {
   astronaut: { emoji:'🚀', ability:{gravityMul:0.45, jumpMul:1.15}, weapon:{emoji:'⚡', speed:700, range:520, cooldown:0.30, dmg:1} },
   taucher:   { emoji:'🤿', ability:{swim:true, swimSpeed:200}, weapon:{emoji:'🫧', speed:480, range:300, cooldown:0.40, dmg:1} },
   feuerwehr: { emoji:'🔥', ability:{gravityMul:1, jumpMul:1}, weapon:{emoji:'💦', speed:0, range:110, cooldown:0.15, dmg:1} },
-  ninja:     { emoji:'🥷', weapon:{emoji:'⭐', speed:820, range:640, cooldown:0.25, dmg:1} },
+  ninja:     { emoji:'🥷', ability:{doubleJump:true, wallJump:true}, weapon:{emoji:'⭐', speed:820, range:640, cooldown:0.25, dmg:1} },
 };
 function costume(){ return COSTUMES[currentLevel().costume]; }
 
@@ -169,6 +190,7 @@ function movePlayer(dt){
   player.y += player.vy * dt;
   // Plattform-Kollision (nur von oben landen)
   player.onGround = false;
+  player.touchingWall = 0;
   for(const p of currentLevel().platforms){
     if(aabb(player, p)){
       const prevBottom = (player.y - player.vy*dt) + player.h;
@@ -176,14 +198,22 @@ function movePlayer(dt){
         player.y = p.y - player.h;
         player.vy = 0;
         player.onGround = true;
+      } else {
+        player.touchingWall = (player.x < p.x ? -1 : 1);
       }
     }
   }
-  // Sprung
-  if(jumpPressed() && player.onGround){
-    player.vy = -effJumpV();
-    player.onGround = false;
+  // Springen mit Doppel-/Wandsprung
+  const canDouble = costume().ability?.doubleJump;
+  const canWall   = costume().ability?.wallJump;
+  const jp = jumpPressed();
+  if(jp && !player.jumpHeld){
+    if(player.onGround){ player.vy = -effJumpV(); player.jumpsLeft = canDouble?1:0; }
+    else if(canWall && player.touchingWall){ player.vy = -effJumpV(); player.vx = -player.touchingWall*CONFIG.MOVE_SPEED; player.jumpsLeft = canDouble?1:0; }
+    else if(canDouble && player.jumpsLeft>0){ player.vy = -effJumpV()*0.9; player.jumpsLeft--; }
   }
+  player.jumpHeld = jp;
+  if(player.onGround) player.jumpsLeft = canDouble?1:0;
 }
 
 let invuln = 0; // Sekunden Unverwundbarkeit nach Treffer
