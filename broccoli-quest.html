@@ -34,6 +34,55 @@ const state = {
 // ===== 5. PLAYER (Minimalfassung) =====
 const player = { x: 100, y: 400, w: 34, h: 44, vx: 0, vy: 0, onGround: false, facing: 1 };
 
+// ===== 9. INPUT =====
+const keys = new Set();
+addEventListener('keydown', e => {
+  if(['ArrowLeft','ArrowRight','ArrowUp','Space','KeyA','KeyD','KeyW','KeyF'].includes(e.code)) e.preventDefault();
+  keys.add(e.code);
+});
+addEventListener('keyup', e => keys.delete(e.code));
+const left  = () => keys.has('ArrowLeft')  || keys.has('KeyA');
+const right = () => keys.has('ArrowRight') || keys.has('KeyD');
+const jumpPressed = () => keys.has('ArrowUp') || keys.has('KeyW') || keys.has('Space');
+
+// ===== 8. PHYSICS =====
+function aabb(a,b){
+  return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+}
+// temporäre Testplattformen bis Task 3 die Level-Daten liefert
+const platforms = [
+  { x:0, y:CONFIG.GROUND_Y, w:2000, h:60 },
+  { x:300, y:400, w:140, h:20 },
+  { x:520, y:320, w:140, h:20 },
+];
+function movePlayer(dt){
+  // horizontal
+  player.vx = 0;
+  if(left())  { player.vx = -CONFIG.MOVE_SPEED; player.facing = -1; }
+  if(right()) { player.vx =  CONFIG.MOVE_SPEED; player.facing =  1; }
+  player.x += player.vx * dt;
+  // vertikal: Schwerkraft
+  player.vy += CONFIG.GRAVITY * dt;
+  player.y += player.vy * dt;
+  // Plattform-Kollision (nur von oben landen)
+  player.onGround = false;
+  for(const p of platforms){
+    if(aabb(player, p)){
+      const prevBottom = (player.y - player.vy*dt) + player.h;
+      if(player.vy > 0 && prevBottom <= p.y + 1){
+        player.y = p.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+      }
+    }
+  }
+  // Sprung
+  if(jumpPressed() && player.onGround){
+    player.vy = -CONFIG.JUMP_V;
+    player.onGround = false;
+  }
+}
+
 // ===== 10. RENDER =====
 function render(){
   ctx.clearRect(0,0,CONFIG.W,CONFIG.H);
@@ -42,6 +91,9 @@ function render(){
   ctx.fillRect(0, CONFIG.GROUND_Y, CONFIG.W, CONFIG.H - CONFIG.GROUND_Y);
   ctx.fillStyle = '#3fa34d';
   ctx.fillRect(0, CONFIG.GROUND_Y, CONFIG.W, 10);
+  // Plattformen
+  ctx.fillStyle = '#8a5a2b';
+  for(const p of platforms){ if(p.y < CONFIG.GROUND_Y) ctx.fillRect(p.x, p.y, p.w, p.h); }
   // Broccoli (Emoji + Körper)
   ctx.font = '44px serif';
   ctx.textAlign = 'center';
@@ -58,7 +110,10 @@ function loop(ts){
   render();
   requestAnimationFrame(loop);
 }
-function update(dt){ /* Task 2 füllt dies */ }
+function update(dt){
+  if(state.screen !== 'play') return;
+  movePlayer(dt);
+}
 requestAnimationFrame(loop);
 </script>
 </body>
