@@ -168,10 +168,16 @@ function effGravity(){ return CONFIG.GRAVITY * (costume().ability?.gravityMul ??
 function effJumpV(){ return CONFIG.JUMP_V * (costume().ability?.jumpMul ?? 1); }
 function movePlayer(dt){
   // horizontal
-  player.vx = 0;
-  if(left())  { player.vx = -CONFIG.MOVE_SPEED; player.facing = -1; }
-  if(right()) { player.vx =  CONFIG.MOVE_SPEED; player.facing =  1; }
-  player.x += player.vx * dt;
+  if(player.wallJumpTimer > 0){
+    // Wandsprung-Impuls: kurz Input ignorieren, damit der Abstoss von der Wand wirkt
+    player.wallJumpTimer -= dt;
+    player.x += player.vx * dt;
+  } else {
+    player.vx = 0;
+    if(left())  { player.vx = -CONFIG.MOVE_SPEED; player.facing = -1; }
+    if(right()) { player.vx =  CONFIG.MOVE_SPEED; player.facing =  1; }
+    player.x += player.vx * dt;
+  }
   if(costume().ability?.swim){
     // frei steuerbares Schwimmen, gedämpfte „Schwerkraft" (Auftrieb)
     const up = keys.has('ArrowUp')||keys.has('KeyW')||keys.has('Space');
@@ -209,7 +215,7 @@ function movePlayer(dt){
   const jp = jumpPressed();
   if(jp && !player.jumpHeld){
     if(player.onGround){ player.vy = -effJumpV(); player.jumpsLeft = canDouble?1:0; }
-    else if(canWall && player.touchingWall){ player.vy = -effJumpV(); player.vx = -player.touchingWall*CONFIG.MOVE_SPEED; player.jumpsLeft = canDouble?1:0; }
+    else if(canWall && player.touchingWall){ player.vy = -effJumpV(); player.vx = player.touchingWall*CONFIG.MOVE_SPEED; player.facing = player.touchingWall; player.wallJumpTimer = 0.18; player.jumpsLeft = canDouble?1:0; }
     else if(canDouble && player.jumpsLeft>0){ player.vy = -effJumpV()*0.9; player.jumpsLeft--; }
   }
   player.jumpHeld = jp;
@@ -219,7 +225,7 @@ function movePlayer(dt){
 let invuln = 0; // Sekunden Unverwundbarkeit nach Treffer
 function respawn(){
   const c = state.activeCheckpoint;
-  player.x = c.x; player.y = c.y; player.vx = 0; player.vy = 0;
+  player.x = c.x; player.y = c.y; player.vx = 0; player.vy = 0; player.wallJumpTimer = 0;
 }
 function hurt(){
   if(invuln > 0) return;
@@ -272,6 +278,37 @@ function updateProjectiles(dt){
 }
 
 // ===== 10. RENDER =====
+// Zeichnet den Broccoli-Spieler kostümabhängig (sx/sy = Bildschirm-Position oben-links)
+function drawPlayer(sx, sy){
+  const w = player.w, h = player.h, mid = sx + w/2;
+  ctx.save();
+  if(player.facing < 0){ ctx.translate(mid*2, 0); ctx.scale(-1,1); }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  if(currentLevel().costume === 'ninja'){
+    // Ninja-Körper (schwarzer Gi)
+    ctx.fillStyle = '#1b1b1b';
+    ctx.fillRect(sx+8, sy+20, w-16, 18);          // Rumpf
+    ctx.fillRect(sx+3, sy+22, 6, 12);             // Arm hinten
+    ctx.fillRect(sx+w-9, sy+22, 6, 12);           // Arm vorne
+    ctx.fillRect(sx+10, sy+37, 6, 7);             // Bein
+    ctx.fillRect(sx+w-16, sy+37, 6, 7);           // Bein
+    // roter Gürtel
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(sx+8, sy+30, w-16, 3);
+    // Broccoli-Kopf
+    ctx.font = '26px serif';
+    ctx.fillText('🥦', mid, sy+20);
+    // rotes Stirnband ÜBER dem Kopf, mit wehenden Bändern (trailing nach hinten)
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(sx+4, sy+7, w-8, 4);
+    ctx.fillRect(sx-4, sy+7, 8, 3);
+    ctx.fillRect(sx-7, sy+11, 8, 3);
+  } else {
+    ctx.font = '44px serif';
+    ctx.fillText('🥦', mid, sy + h);
+  }
+  ctx.restore();
+}
 function render(){
   const L = currentLevel();
   ctx.clearRect(0,0,CONFIG.W,CONFIG.H);
@@ -301,14 +338,9 @@ function render(){
   // Projektile
   ctx.font = '20px serif';
   for(const pr of projectiles) ctx.fillText(pr.emoji, pr.x - cx, pr.y + 14);
-  // Broccoli
-  ctx.font = '44px serif';
-  if(invuln > 0 && Math.floor(invuln*10)%2===0){ /* Blink: Broccoli in diesem Frame nicht zeichnen */ }
-  else {
-  ctx.save();
-  if(player.facing < 0){ ctx.translate((player.x - cx + player.w/2)*2, 0); ctx.scale(-1,1); }
-  ctx.fillText('🥦', player.x - cx + player.w/2, player.y + player.h);
-  ctx.restore();
+  // Broccoli-Spieler (kostümabhängig, blinkt bei Unverwundbarkeit)
+  if(!(invuln > 0 && Math.floor(invuln*10)%2===0)){
+    drawPlayer(player.x - cx, player.y);
   }
   // HUD
   ctx.font = '22px serif'; ctx.textAlign='left';
