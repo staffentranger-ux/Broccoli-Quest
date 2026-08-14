@@ -91,6 +91,25 @@ const LEVELS = [
     checkpoints: [{x:1500,y:300}],
     start:{x:60,y:200}, goalX:2900,
   },
+  {
+    name: 'Vulkan-Höhle', costume: 'feuerwehr', worldW: 3000, groundY: 500, bg: '#2a0d0d',
+    platforms: [
+      {x:0,y:500,w:520,h:60},{x:700,y:500,w:300,h:60},{x:1150,y:500,w:300,h:60},
+      {x:1600,y:420,w:180,h:20},{x:1900,y:340,w:180,h:20},{x:2200,y:500,w:800,h:60},
+    ],
+    hazards: [
+      {x:520,y:520,w:180,h:40,type:'lava'},   // Lavabecken in Plattform-Lücken
+      {x:1000,y:520,w:150,h:40,type:'lava'},
+      {x:1450,y:520,w:150,h:40,type:'lava'},
+    ],
+    enemies: [
+      {x:800, y:472, w:30,h:28, type:'walker', emoji:'🦎', dir:1, speed:70, range:100, baseX:800, alive:true},
+      {x:2400,y:472, w:30,h:28, type:'walker', emoji:'🔥', dir:-1,speed:60, range:150, baseX:2400,alive:true},
+    ],
+    stars: [{x:760,y:440},{x:1950,y:290},{x:2500,y:440}],
+    checkpoints: [{x:1600,y:376}],
+    start:{x:60,y:440}, goalX:2900,
+  },
 ];
 
 // ===== 4. COSTUMES =====
@@ -100,7 +119,7 @@ const COSTUMES = {
   basis:     { emoji:'🧢', ability:{gravityMul:1, jumpMul:1}, weapon:{emoji:'🧂', speed:520, range:260, cooldown:0.35, dmg:1} },
   astronaut: { emoji:'🚀', ability:{gravityMul:0.45, jumpMul:1.15}, weapon:{emoji:'⚡', speed:700, range:520, cooldown:0.30, dmg:1} },
   taucher:   { emoji:'🤿', ability:{swim:true, swimSpeed:200}, weapon:{emoji:'🫧', speed:480, range:300, cooldown:0.40, dmg:1} },
-  feuerwehr: { emoji:'💦', weapon:{emoji:'💦', speed:0,   range:110, cooldown:0.15, dmg:1} },
+  feuerwehr: { emoji:'🔥', ability:{gravityMul:1, jumpMul:1}, weapon:{emoji:'💦', speed:0, range:110, cooldown:0.15, dmg:1} },
   ninja:     { emoji:'🥷', weapon:{emoji:'⭐', speed:820, range:640, cooldown:0.25, dmg:1} },
 };
 function costume(){ return COSTUMES[currentLevel().costume]; }
@@ -209,13 +228,17 @@ function fireWeapon(){
 function updateProjectiles(dt){
   const L = currentLevel();
   for(const pr of projectiles){
-    const step = (pr.speed || 400) * dt;
-    pr.x += pr.dir * step; pr.travelled += step;
-    for(const e of L.enemies){
-      if(e.alive && aabb(pr, e)){ e.alive = false; state.score += 20; pr.dead = true; }
+    if(pr.speed === 0){
+      // Nahbereich-Strahl: folgt dem Player, kurze Lebensdauer über range als „Zeit*100"
+      pr.x = player.x + (pr.dir>0 ? player.w : -pr.range); pr.w = pr.range; pr.h = 20;
+      pr.y = player.y + player.h*0.4;
+      pr.travelled += 300*dt;
+    } else {
+      const step = pr.speed * dt; pr.x += pr.dir*step; pr.travelled += step;
     }
+    for(const e of L.enemies){ if(e.alive && aabb(pr, e)){ e.alive=false; state.score+=20; if(pr.speed!==0) pr.dead=true; } }
   }
-  projectiles = projectiles.filter(pr => !pr.dead && pr.travelled < pr.range);
+  projectiles = projectiles.filter(pr => !pr.dead && pr.travelled < pr.range + (pr.speed===0?100:0));
 }
 
 // ===== 10. RENDER =====
@@ -232,6 +255,8 @@ function render(){
     ctx.fillStyle = '#3fa34d';
     ctx.fillRect(p.x - cx, p.y, p.w, 8);
   }
+  // Lava-Hazards
+  for(const hz of (L.hazards||[])){ if(hz.type==='lava'){ ctx.fillStyle='#ff5522'; ctx.fillRect(hz.x-cx,hz.y,hz.w,hz.h); } }
   // Checkpoints
   ctx.font = '30px serif'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   for(const c of L.checkpoints) ctx.fillText('🚩', c.x - cx, c.y + 28);
@@ -289,6 +314,9 @@ function update(dt){
     }
   }
   updateEnemies(dt);
+  for(const hz of (L.hazards||[])){
+    if(hz.type==='lava' && aabb(player, hz)) hurt();
+  }
   // Kamera folgt, geklemmt auf Weltgrenzen
   state.cameraX = Math.max(0, Math.min(player.x + player.w/2 - CONFIG.W/2, L.worldW - CONFIG.W));
   // Sterne einsammeln
