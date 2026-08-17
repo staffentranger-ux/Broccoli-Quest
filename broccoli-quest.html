@@ -395,11 +395,43 @@ function centerText(lines, colorTitle){
   ctx.textAlign='center';
   lines.forEach((l,i)=>{ ctx.fillStyle = i===0?colorTitle:'#e8e8e8'; ctx.font = (i===0?'54px':'26px')+' serif'; ctx.fillText(l, CONFIG.W/2, 180 + i*56); });
 }
-function renderStart(){ centerText(['🥦 Broccoli-Quest','5 Levels · 5 Kostüme · 5 Waffen','←/→ laufen · Leertaste springen · F Waffe','[Enter] zum Starten'], '#3fa34d'); }
+// Zeichnet die Ranglisten-Box abhängig vom board-Status; highlightName wird hervorgehoben
+function drawBoard(cx, topY, highlightName){
+  ctx.textAlign = 'center'; ctx.fillStyle = '#ffd23f'; ctx.font = '24px serif';
+  ctx.fillText('🏆 Bestenliste', cx, topY);
+  ctx.font = '20px serif';
+  if(board.status === 'loading' || board.status === 'idle'){
+    ctx.fillStyle = '#cfd3dc'; ctx.fillText('lädt …', cx, topY + 36); return;
+  }
+  if(board.status === 'error'){
+    ctx.fillStyle = '#e88'; ctx.fillText('⚠ Rangliste nicht erreichbar', cx, topY + 36);
+    ctx.fillStyle = '#cfd3dc'; ctx.fillText('[R] erneut versuchen', cx, topY + 62); return;
+  }
+  if(board.entries.length === 0){
+    ctx.fillStyle = '#cfd3dc'; ctx.fillText('Noch keine Einträge — sei der Erste!', cx, topY + 36); return;
+  }
+  ctx.textAlign = 'left';
+  board.entries.forEach((e, i) => {
+    const y = topY + 34 + i*24;
+    const isMe = highlightName && e.name === highlightName;
+    ctx.fillStyle = isMe ? '#7CFC66' : '#e8e8e8';
+    ctx.font = (isMe ? 'bold ' : '') + '19px serif';
+    ctx.fillText(`${String(i+1).padStart(2,' ')}.  ${e.name}`, cx - 150, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(String(e.score), cx + 150, y);
+    ctx.textAlign = 'left';
+  });
+  ctx.textAlign = 'center';
+}
+function renderStart(){
+  centerText(['🥦 Broccoli-Quest','5 Levels · 5 Kostüme · 5 Waffen','←/→ laufen · Leertaste springen · F Waffe','[Enter] zum Starten'], '#3fa34d');
+  drawBoard(CONFIG.W/2, 300, null);
+}
 function renderWin(){ centerText(['🏆 Geschafft!','Broccoli hat alle 5 Levels gemeistert!','Punkte: '+state.score,'[Enter] zurück zum Start'], '#ffd23f'); }
 function render(){
   if(state.screen==='start'){ return renderStart(); }
   if(state.screen==='win'){ return renderWin(); }
+  if(state.screen==='leaderboard'){ return renderLeaderboard(); }
   const L = currentLevel();
   ctx.clearRect(0,0,CONFIG.W,CONFIG.H);
   ctx.fillStyle = L.bg; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
@@ -454,8 +486,12 @@ function loop(ts){
   requestAnimationFrame(loop);
 }
 function update(dt){
-  if(state.screen === 'start'){ if(keys.has('Enter')||keys.has('Space')){ loadLevel(0); state.screen='play'; } return; }
-  if(state.screen === 'win'){ if(keys.has('Enter')){ state.screen='start'; } return; }
+  if(state.screen === 'start'){
+    if(board.status === 'idle') fetchScores();
+    if(keys.has('Enter')||keys.has('Space')){ loadLevel(0); state.screen='play'; }
+    return;
+  }
+  if(state.screen === 'win' || state.screen === 'leaderboard'){ return; } // Eingaben laufen über keydown
   if(state.screen !== 'play') return;
   const L = currentLevel();
   if(state.introTimer>0) state.introTimer -= dt;
