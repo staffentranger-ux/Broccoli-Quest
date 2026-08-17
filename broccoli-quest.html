@@ -19,6 +19,11 @@ const CONFIG = {
   JUMP_V: 720,          // px/s initiale Sprunggeschwindigkeit
   GROUND_Y: 480,        // Boden-Oberkante im Tutorial (überschrieben je Level)
 };
+
+// ===== 1b. SUPABASE CONFIG =====
+const SUPABASE_URL = 'https://jfepjcqxphdixefdxebi.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpmZXBqY3F4cGhkaXhlZmR4ZWJpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY5NTA5NDEsImV4cCI6MjEwMjUyNjk0MX0.2wx0jMabmx52HAe314RZQbAJxbbA9in0rwyiQcaPIj8';
+
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
@@ -30,6 +35,35 @@ const state = {
   score: 0,
   cameraX: 0,
 };
+
+// ===== 2b. LEADERBOARD STATE =====
+const board = { status: 'idle', entries: [], error: '' }; // status: idle|loading|ready|error
+
+// ===== LEADERBOARD =====
+const SB_HEADERS = { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY };
+async function fetchScores(){
+  board.status = 'loading'; board.error = '';
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/highscores?select=name,score&order=score.desc,created_at.asc&limit=10`;
+    const res = await fetch(url, { headers: SB_HEADERS });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    board.entries = await res.json();
+    board.status = 'ready';
+  } catch(err){
+    board.status = 'error'; board.error = String(err && err.message || err);
+  }
+}
+async function submitScore(name, score){
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/highscores`, {
+      method: 'POST',
+      headers: { ...SB_HEADERS, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ name, score })
+    });
+    return res.ok;
+  } catch(err){ return false; }
+}
+
 function currentLevel(){ return LEVELS[state.levelIndex]; }
 function loadLevel(i){
   state.levelIndex = i;
