@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Broccoli-Quest</title>
+<style>
+  html,body{margin:0;height:100%;background:#1b1b2b;display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;}
+  canvas{background:#87ceeb;image-rendering:pixelated;box-shadow:0 8px 40px rgba(0,0,0,.5);border-radius:8px;}
+</style>
+</head>
+<body>
+<canvas id="game" width="960" height="540"></canvas>
+<script>
+// ===== 1. CONFIG =====
+const CONFIG = {
+  W: 960, H: 540,
+  GRAVITY: 2000,        // px/s^2
+  MOVE_SPEED: 260,      // px/s
+  JUMP_V: 720,          // px/s initiale Sprunggeschwindigkeit
+  GROUND_Y: 480,        // Boden-Oberkante im Tutorial (überschrieben je Level)
+};
+
+// ===== 1b. SUPABASE CONFIG =====
+const SUPABASE_URL = 'https://jfepjcqxphdixefdxebi.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpmZXBqY3F4cGhkaXhlZmR4ZWJpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY5NTA5NDEsImV4cCI6MjEwMjUyNjk0MX0.2wx0jMabmx52HAe314RZQbAJxbbA9in0rwyiQcaPIj8';
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// ===== 2. STATE =====
+const state = {
+  screen: 'start',      // 'start' | 'play' | 'win'
+  levelIndex: 0,
+  hearts: 3,
+  score: 0,
+  cameraX: 0,
+};
+
+// ===== 2b. LEADERBOARD STATE =====
+const board = { status: 'idle', entries: [], error: '' }; // status: idle|loading|ready|error
+
+// ===== LEADERBOARD =====
+const SB_HEADERS = { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY };
+async function fetchScores(){
+  board.status = 'loading'; board.error = '';
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/highscores?select=name,score&order=score.desc,created_at.asc&limit=10`;
+    const res = await fetch(url, { headers: SB_HEADERS });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    board.entries = await res.json();
+    board.status = 'ready';
+  } catch(err){
+    board.status = 'error'; board.error = String(err && err.message || err);
+  }
+}
+async function submitScore(name, score){
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/highscores`, {
+      method: 'POST',
+      headers: { ...SB_HEADERS, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ name, score })
+    });
+    return res.ok;
+  } catch(err){ return false; }
+}
+function confirmName(){
+  const name = (state.nameInput.trim() || 'Broccoli').slice(0, 12);
+  state.submitState = 'sending';
+  submitScore(name, state.pendingScore).then(ok => {
+    if(ok){
+      state.lastEntry = { name, score: state.pendingScore };
+      fetchScores();
+      state.screen = 'leaderboard';
+    } else {
+      state.submitState = 'error';
+    }
+  });
+}
+
+function currentLevel(){ return LEVELS[state.levelIndex]; }
+function loadLevel(i){
+  state.levelIndex = i;
+  const L = LEVELS[i];
+  state.hearts = 3; state.cameraX = 0;
+  state.activeCheckpoint = { ...L.start };
+  player.x = L.start.x; player.y = L.start.y; player.vx = 0; player.vy = 0;
+  CONFIG.GROUND_Y = L.groundY;
+  state.introTimer = 2;
+}
+
+// ===== 3. LEVELS =====
+// Jedes Level: {name, costume, worldW, groundY, bg, platforms[], hazards[], enemies[], stars[], checkpoints[], start{x,y}, goalX}
+const LEVELS = [
+  {
+    name: 'Der Garten', costume: 'basis', worldW: 2600, groundY: 480, bg: '#87ceeb',
+    platforms: [
+      {x:0,   y:480, w:900,  h:60},
+      {x:1000,y:480, w:1600, h:60},           // Lücke 900–1000 = Loch
+      {x:340, y:390, w:150, h:20},
+      {x:600, y:310, w:150, h:20},
+      {x:1250,y:380, w:150, h:20},
+    ],
+    hazards: [],           // Task 4 füllt Löcher/Spikes-Logik; Löcher entstehen durch Plattform-Lücken
+    enemies: [
+      {x:500, y:452, w:30, h:28, type:'walker', emoji:'🐌', dir:1, speed:60, range:120, baseX:500, alive:true},
+      {x:1300,y:452, w:30, h:28, type:'walker', emoji:'🐛', dir:-1, speed:80, range:150, baseX:1300, alive:true},
+    ],           // Task 5
+    stars:   [{x:400,y:340},{x:660,y:260},{x:1300,y:330}],
+    checkpoints: [{x:1000,y:436}],
+    start: {x:60, y:420}, goalX: 2500,
+  },
+  {
+    name: 'Weltraum-Station', costume: 'astronaut', worldW: 3000, groundY: 500, bg: '#0b1026',
+    platforms: [
+      {x:0,y:500,w:500,h:60},
+      {x:640,y:430,w:150,h:20},{x:900,y:340,w:150,h:20},{x:1180,y:260,w:150,h:20},
+      {x:1450,y:360,w:180,h:20},{x:1780,y:300,w:160,h:20},{x:2050,y:420,w:220,h:20},
+      {x:2350,y:500,w:650,h:60},
+    ],
+    hazards: [],
+    enemies: [
+      {x:950, y:300, w:30,h:28, type:'walker', emoji:'👾', dir:1, speed:70, range:120, baseX:950, alive:true},
+      {x:1820,y:262, w:30,h:28, type:'walker', emoji:'🛸', dir:-1,speed:90, range:100, baseX:1820,alive:true},
+    ],
+    stars: [{x:960,y:300},{x:1240,y:220},{x:1840,y:260}],
+    checkpoints: [{x:1450,y:316}],
+    start:{x:60,y:440}, goalX:2900,
+  },
+  {
+    name: 'Korallen-Riff', costume: 'taucher', worldW: 3000, groundY: 520, bg: '#0a5c8a',
+    platforms: [ {x:0,y:520,w:3000,h:40} ], // Meeresboden durchgehend
+    hazards: [],
+    enemies: [
+      {x:700, y:200, w:30,h:30, type:'walker', emoji:'🪼', dir:1, speed:60, range:140, baseX:700, alive:true},
+      {x:1200,y:360, w:30,h:30, type:'walker', emoji:'🐚', dir:1, speed:50, range:120, baseX:1200,alive:true},
+      {x:1900,y:150, w:30,h:30, type:'walker', emoji:'🪼', dir:-1,speed:70, range:160, baseX:1900,alive:true},
+    ],
+    stars: [{x:760,y:120},{x:1500,y:300},{x:2200,y:180}],
+    checkpoints: [{x:1500,y:300}],
+    start:{x:60,y:200}, goalX:2900,
+  },
+  {
+    name: 'Vulkan-Höhle', costume: 'feuerwehr', worldW: 3000, groundY: 500, bg: '#2a0d0d',
+    platforms: [
+      {x:0,y:500,w:520,h:60},{x:700,y:500,w:300,h:60},{x:1150,y:500,w:300,h:60},
+      {x:1600,y:420,w:180,h:20},{x:1900,y:340,w:180,h:20},{x:2200,y:500,w:800,h:60},
+    ],
+    hazards: [
+      {x:520,y:520,w:180,h:40,type:'lava'},   // Lavabecken in Plattform-Lücken
+      {x:1000,y:520,w:150,h:40,type:'lava'},
+      {x:1450,y:520,w:150,h:40,type:'lava'},
+    ],
+    enemies: [
+      {x:800, y:472, w:30,h:28, type:'walker', emoji:'🦎', dir:1, speed:70, range:100, baseX:800, alive:true},
+      {x:2400,y:472, w:30,h:28, type:'walker', emoji:'🔥', dir:-1,speed:60, range:150, baseX:2400,alive:true},
+    ],
+    stars: [{x:760,y:440},{x:1950,y:290},{x:2500,y:440}],
+    checkpoints: [{x:1600,y:376}],
+    start:{x:60,y:440}, goalX:2900,
+  },
+  {
+    name: 'Bambus-Tempel', costume: 'ninja', worldW: 3200, groundY: 500, bg: '#123a2a',
+    platforms: [
+      {x:0,y:500,w:400,h:60},
+      {x:560,y:200,w:40,h:300},   // hohe Wand für Wandsprung
+      {x:760,y:380,w:140,h:20},{x:1000,y:280,w:40,h:220},
+      {x:1200,y:360,w:150,h:20},{x:1500,y:260,w:150,h:20},
+      {x:1780,y:200,w:40,h:300},{x:1980,y:340,w:180,h:20},
+      {x:2300,y:440,w:200,h:20},{x:2600,y:500,w:600,h:60},
+    ],
+    hazards: [
+      {x:400,y:540,w:160,h:20,type:'lava'},{x:2500,y:540,w:100,h:20,type:'lava'},
+    ],
+    enemies: [
+      {x:820, y:352, w:30,h:28, type:'walker', emoji:'🦂', dir:1, speed:90, range:80, baseX:820, alive:true},
+      {x:2050,y:312, w:30,h:28, type:'walker', emoji:'🥷', dir:-1,speed:110,range:120, baseX:2050,alive:true},
+    ],
+    stars: [{x:820,y:320},{x:1560,y:200},{x:2360,y:380}],
+    checkpoints: [{x:1500,y:216}],
+    start:{x:60,y:440}, goalX:3100,
+  },
+];
+
+// ===== 4. COSTUMES =====
+// ability: {gravity?, jumpV?, doubleJump?, wallJump?, swim?, fireproof?} — Task 7–10 nutzen Felder
+// weapon:  {emoji, speed, range, cooldown, dmg}  speed=0 => Nahbereich-Strahl
+const COSTUMES = {
+  basis:     { emoji:'🧢', ability:{gravityMul:1, jumpMul:1}, weapon:{emoji:'🧂', speed:520, range:260, cooldown:0.35, dmg:1} },
+  astronaut: { emoji:'🚀', ability:{gravityMul:0.45, jumpMul:1.15}, weapon:{emoji:'⚡', speed:700, range:520, cooldown:0.30, dmg:1} },
+  taucher:   { emoji:'🤿', ability:{swim:true, swimSpeed:200}, weapon:{emoji:'🫧', speed:480, range:300, cooldown:0.40, dmg:1} },
+  feuerwehr: { emoji:'🔥', ability:{gravityMul:1, jumpMul:1, fireproof:true}, weapon:{emoji:'💦', speed:0, range:110, cooldown:0.15, dmg:1} },
+  ninja:     { emoji:'🥷', ability:{doubleJump:true, wallJump:true}, weapon:{emoji:'⭐', speed:820, range:640, cooldown:0.25, dmg:1} },
+};
+function costume(){ return COSTUMES[currentLevel().costume]; }
+
+// ===== 5. PLAYER (Minimalfassung) =====
+const player = { x: 100, y: 400, w: 34, h: 44, vx: 0, vy: 0, onGround: false, facing: 1 };
+loadLevel(0);
+
+// ===== 9. INPUT =====
+const keys = new Set();
+addEventListener('keydown', e => {
+  // Namenseingabe am Sieg-Screen
+  if(state.screen === 'win' && state.submitState === 'input'){
+    e.preventDefault();
+    if(e.key === 'Enter'){ confirmName(); }
+    else if(e.key === 'Backspace'){ state.nameInput = state.nameInput.slice(0, -1); }
+    else if(/^[A-Za-z0-9 ]$/.test(e.key) && state.nameInput.length < 12){ state.nameInput += e.key; }
+    return;
+  }
+  // Sieg-Screen Fehlerzustand
+  if(state.screen === 'win' && state.submitState === 'error'){
+    e.preventDefault();
+    if(e.key === 'Enter'){ confirmName(); }
+    else if(e.key === 'Escape'){ state.lastEntry = null; fetchScores(); state.screen = 'leaderboard'; }
+    return;
+  }
+  // Rangliste-Screen: Enter -> Start
+  if(state.screen === 'leaderboard'){
+    if(e.key === 'Enter'){ e.preventDefault(); board.status = 'idle'; state.screen = 'start'; }
+    return;
+  }
+  // Start-Screen: R = Rangliste neu laden
+  if(state.screen === 'start' && (e.key === 'r' || e.key === 'R')){ e.preventDefault(); fetchScores(); return; }
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','KeyA','KeyD','KeyW','KeyS','KeyF','Enter'].includes(e.code)) e.preventDefault();
+  keys.add(e.code);
+});
+addEventListener('keyup', e => keys.delete(e.code));
+const left  = () => keys.has('ArrowLeft')  || keys.has('KeyA');
+const right = () => keys.has('ArrowRight') || keys.has('KeyD');
+const jumpPressed = () => keys.has('ArrowUp') || keys.has('KeyW') || keys.has('Space');
+
+// ===== 8. PHYSICS =====
+function aabb(a,b){
+  return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+}
+function effGravity(){ return CONFIG.GRAVITY * (costume().ability?.gravityMul ?? 1); }
+function effJumpV(){ return CONFIG.JUMP_V * (costume().ability?.jumpMul ?? 1); }
+function movePlayer(dt){
+  // horizontal
+  if(player.wallJumpTimer > 0){
+    // Wandsprung-Impuls: kurz Input ignorieren, damit der Abstoss von der Wand wirkt
+    player.wallJumpTimer -= dt;
+    player.x += player.vx * dt;
+  } else {
+    player.vx = 0;
+    if(left())  { player.vx = -CONFIG.MOVE_SPEED; player.facing = -1; }
+    if(right()) { player.vx =  CONFIG.MOVE_SPEED; player.facing =  1; }
+    player.x += player.vx * dt;
+  }
+  if(costume().ability?.swim){
+    // frei steuerbares Schwimmen, gedämpfte „Schwerkraft" (Auftrieb)
+    const up = keys.has('ArrowUp')||keys.has('KeyW')||keys.has('Space');
+    const down = keys.has('ArrowDown')||keys.has('KeyS');
+    const s = costume().ability.swimSpeed;
+    player.vy = (up ? -s : down ? s : 40); // leichtes Absinken
+    player.y += player.vy * dt;
+    // horizontale Bewegung wurde oben schon gesetzt; keine Plattform-Landung nötig, aber Boden begrenzt
+    const L = currentLevel();
+    if(player.y + player.h > L.groundY){ player.y = L.groundY - player.h; }
+    if(player.y < 0) player.y = 0;
+    return; // Schwerkraft/Sprung überspringen
+  }
+  // vertikal: Schwerkraft
+  player.vy += effGravity() * dt;
+  player.y += player.vy * dt;
+  // Plattform-Kollision (nur von oben landen)
+  player.onGround = false;
+  player.touchingWall = 0;
+  for(const p of currentLevel().platforms){
+    if(aabb(player, p)){
+      const prevBottom = (player.y - player.vy*dt) + player.h;
+      if(player.vy > 0 && prevBottom <= p.y + 1){
+        player.y = p.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+      } else {
+        player.touchingWall = (player.x < p.x ? -1 : 1);
+      }
+    }
+  }
+  // Feuerwehr: Lava ist begehbare Fläche (nur für feuerfeste Kostüme)
+  if(costume().ability?.fireproof){
+    for(const hz of (currentLevel().hazards||[])){
+      if(hz.type==='lava' && aabb(player, hz)){
+        const prevBottom = (player.y - player.vy*dt) + player.h;
+        if(player.vy > 0 && prevBottom <= hz.y + 1){
+          player.y = hz.y - player.h; player.vy = 0; player.onGround = true;
+        }
+      }
+    }
+  }
+  // Springen mit Doppel-/Wandsprung
+  const canDouble = costume().ability?.doubleJump;
+  const canWall   = costume().ability?.wallJump;
+  const jp = jumpPressed();
+  if(jp && !player.jumpHeld){
+    if(player.onGround){ player.vy = -effJumpV(); player.jumpsLeft = canDouble?1:0; }
+    else if(canWall && player.touchingWall){ player.vy = -effJumpV(); player.vx = player.touchingWall*CONFIG.MOVE_SPEED; player.facing = player.touchingWall; player.wallJumpTimer = 0.18; player.jumpsLeft = canDouble?1:0; }
+    else if(canDouble && player.jumpsLeft>0){ player.vy = -effJumpV()*0.9; player.jumpsLeft--; }
+  }
+  player.jumpHeld = jp;
+  if(player.onGround) player.jumpsLeft = canDouble?1:0;
+}
+
+let invuln = 0; // Sekunden Unverwundbarkeit nach Treffer
+function respawn(){
+  const c = state.activeCheckpoint;
+  player.x = c.x; player.y = c.y; player.vx = 0; player.vy = 0; player.wallJumpTimer = 0;
+}
+function hurt(){
+  if(invuln > 0) return;
+  state.hearts--; invuln = 1.2;
+  if(state.hearts <= 0){ loadLevel(state.levelIndex); } // ganzes Level neu
+  else { respawn(); }
+}
+
+// ===== 6. ENEMIES =====
+function updateEnemies(dt){
+  const L = currentLevel();
+  for(const e of L.enemies){
+    if(!e.alive) continue;
+    if(e.type === 'walker'){
+      e.x += e.dir * e.speed * dt;
+      if(e.x > e.baseX + e.range) e.dir = -1;
+      if(e.x < e.baseX - e.range) e.dir = 1;
+    }
+    // Kollision mit Player = Schaden
+    if(aabb(player, e)) hurt();
+  }
+}
+
+// ===== 7. PROJECTILES =====
+let projectiles = [];
+function fireWeapon(){
+  if(player.cooldown > 0) return;
+  const w = costume().weapon;
+  player.cooldown = w.cooldown;
+  projectiles.push({
+    x: player.x + (player.facing>0 ? player.w : -10), y: player.y + player.h*0.4,
+    w: 18, h: 14, dir: player.facing, speed: w.speed, dmg: w.dmg,
+    travelled: 0, range: w.range, emoji: w.emoji,
+  });
+}
+function updateProjectiles(dt){
+  const L = currentLevel();
+  for(const pr of projectiles){
+    if(pr.speed === 0){
+      // Nahbereich-Strahl: folgt dem Player, kurze Lebensdauer über range als „Zeit*100"
+      pr.x = player.x + (pr.dir>0 ? player.w : -pr.range); pr.w = pr.range; pr.h = 20;
+      pr.y = player.y + player.h*0.4;
+      pr.travelled += 300*dt;
+    } else {
+      const step = pr.speed * dt; pr.x += pr.dir*step; pr.travelled += step;
+    }
+    for(const e of L.enemies){ if(e.alive && aabb(pr, e)){ e.alive=false; state.score+=20; if(pr.speed!==0) pr.dead=true; } }
+  }
+  projectiles = projectiles.filter(pr => !pr.dead && pr.travelled < pr.range + (pr.speed===0?100:0));
+}
+
+// ===== 10. RENDER =====
+// Zeichnet den Broccoli-Spieler kostümabhängig (sx/sy = Bildschirm-Position oben-links)
+// Aussehen pro Kostüm: Körperfarben + Accessoire-Typ auf dem Broccoli-Kopf
+const COSTUME_LOOK = {
+  basis:     { body:'#3a8f3a', arm:'#2f7a2f', leg:'#5a3a1e', belt:'#2c5f28', hat:'cap',    acc:'#d64545' },
+  astronaut: { body:'#eef2f6', arm:'#d5dbe2', leg:'#c2c8d0', belt:'#9aa4b0', hat:'helmet', acc:'#bfeaff' },
+  taucher:   { body:'#1f4e6b', arm:'#173c53', leg:'#0f2c3d', belt:'#12303f', hat:'mask',   acc:'#8fd8ff' },
+  feuerwehr: { body:'#c0392b', arm:'#a53125', leg:'#7d2018', belt:'#f1c40f', hat:'fire',   acc:'#f4d03f' },
+  ninja:     { body:'#1b1b1b', arm:'#141414', leg:'#0d0d0d', belt:'#c0392b', hat:'band',   acc:'#c0392b' },
+};
+// Zeichnet das Kostüm-Accessoire auf/um den Broccoli-Kopf (facing bereits normalisiert nach rechts)
+function drawHat(sx, sy, w, look){
+  const mid = sx + w/2;
+  ctx.fillStyle = look.acc;
+  switch(look.hat){
+    case 'cap': // Schirmmütze
+      ctx.fillRect(sx+6, sy+2, w-12, 5);
+      ctx.fillRect(sx+w-11, sy+5, 10, 3);          // Schirm nach vorne
+      break;
+    case 'helmet': // Astronauten-Glashelm über dem Kopf
+      ctx.globalAlpha = 0.30; ctx.beginPath(); ctx.arc(mid, sy+9, 14, 0, Math.PI*2); ctx.fill(); ctx.globalAlpha = 1;
+      ctx.strokeStyle = look.acc; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(mid, sy+9, 14, 0, Math.PI*2); ctx.stroke();
+      break;
+    case 'mask': // Tauchermaske + Schnorchel
+      ctx.fillRect(sx+7, sy+5, w-14, 5);           // Maskenband
+      ctx.fillRect(sx+w-5, sy+1, 3, 13);           // Schnorchel seitlich
+      break;
+    case 'fire': // Feuerwehrhelm (Kappe + Krempe)
+      ctx.fillRect(sx+5, sy+2, w-10, 5);
+      ctx.fillRect(sx+3, sy+6, w-6, 2);
+      break;
+    case 'band': // Ninja-Stirnband mit wehenden Bändern
+      ctx.fillRect(sx+4, sy+7, w-8, 4);
+      ctx.fillRect(sx-4, sy+7, 8, 3);
+      ctx.fillRect(sx-7, sy+11, 8, 3);
+      break;
+  }
+}
+// Zeichnet den Broccoli-Spieler als kostümiertes Männchen (sx/sy = Bildschirm-Position oben-links)
+function drawPlayer(sx, sy){
+  const w = player.w, h = player.h, mid = sx + w/2;
+  const look = COSTUME_LOOK[currentLevel().costume] || COSTUME_LOOK.basis;
+  ctx.save();
+  if(player.facing < 0){ ctx.translate(mid*2, 0); ctx.scale(-1,1); }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  // Beine
+  ctx.fillStyle = look.leg;
+  ctx.fillRect(sx+10, sy+37, 6, 7);
+  ctx.fillRect(sx+w-16, sy+37, 6, 7);
+  // Arme
+  ctx.fillStyle = look.arm;
+  ctx.fillRect(sx+3, sy+22, 6, 12);
+  ctx.fillRect(sx+w-9, sy+22, 6, 12);
+  // Rumpf (Anzug)
+  ctx.fillStyle = look.body;
+  ctx.fillRect(sx+8, sy+20, w-16, 18);
+  // Gürtel
+  ctx.fillStyle = look.belt;
+  ctx.fillRect(sx+8, sy+30, w-16, 3);
+  // Broccoli-Kopf
+  ctx.font = '26px serif';
+  ctx.fillText('🥦', mid, sy+20);
+  // Kostüm-Accessoire
+  drawHat(sx, sy, w, look);
+  ctx.restore();
+}
+function centerText(lines, colorTitle){
+  ctx.fillStyle='#10131f'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+  ctx.textAlign='center';
+  lines.forEach((l,i)=>{ ctx.fillStyle = i===0?colorTitle:'#e8e8e8'; ctx.font = (i===0?'54px':'26px')+' serif'; ctx.fillText(l, CONFIG.W/2, 180 + i*56); });
+}
+// Zeichnet die Ranglisten-Box abhängig vom board-Status; highlightName wird hervorgehoben
+function drawBoard(cx, topY, highlightName){
+  ctx.textAlign = 'center'; ctx.fillStyle = '#ffd23f'; ctx.font = '24px serif';
+  ctx.fillText('🏆 Bestenliste', cx, topY);
+  ctx.font = '20px serif';
+  if(board.status === 'loading' || board.status === 'idle'){
+    ctx.fillStyle = '#cfd3dc'; ctx.fillText('lädt …', cx, topY + 36); return;
+  }
+  if(board.status === 'error'){
+    ctx.fillStyle = '#e88'; ctx.fillText('⚠ Rangliste nicht erreichbar', cx, topY + 36);
+    ctx.fillStyle = '#cfd3dc'; ctx.fillText('[R] erneut versuchen', cx, topY + 62); return;
+  }
+  if(board.entries.length === 0){
+    ctx.fillStyle = '#cfd3dc'; ctx.fillText('Noch keine Einträge — sei der Erste!', cx, topY + 36); return;
+  }
+  ctx.textAlign = 'left';
+  board.entries.forEach((e, i) => {
+    const y = topY + 34 + i*24;
+    const isMe = highlightName && e.name === highlightName;
+    ctx.fillStyle = isMe ? '#7CFC66' : '#e8e8e8';
+    ctx.font = (isMe ? 'bold ' : '') + '19px serif';
+    ctx.fillText(`${String(i+1).padStart(2,' ')}.  ${e.name}`, cx - 150, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(String(e.score), cx + 150, y);
+    ctx.textAlign = 'left';
+  });
+  ctx.textAlign = 'center';
+}
+function renderStart(){
+  centerText(['🥦 Broccoli-Quest','5 Levels · 5 Kostüme · 5 Waffen','←/→ laufen · Leertaste springen · F Waffe','[Enter] zum Starten'], '#3fa34d');
+  drawBoard(CONFIG.W/2, 300, null);
+}
+function renderWin(){
+  ctx.fillStyle = '#10131f'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd23f'; ctx.font = '54px serif';
+  ctx.fillText('🏆 Geschafft!', CONFIG.W/2, 150);
+  ctx.fillStyle = '#e8e8e8'; ctx.font = '26px serif';
+  ctx.fillText('Broccoli hat alle 5 Levels gemeistert!', CONFIG.W/2, 205);
+  ctx.fillText('Punkte: ' + state.pendingScore, CONFIG.W/2, 250);
+  if(state.submitState === 'sending'){
+    ctx.fillStyle = '#cfd3dc'; ctx.fillText('wird gesendet …', CONFIG.W/2, 330); return;
+  }
+  if(state.submitState === 'error'){
+    ctx.fillStyle = '#e88'; ctx.fillText('⚠ Senden fehlgeschlagen', CONFIG.W/2, 320);
+    ctx.fillStyle = '#cfd3dc'; ctx.font = '22px serif';
+    ctx.fillText('[Enter] nochmal   ·   [Esc] überspringen', CONFIG.W/2, 356); return;
+  }
+  // submitState === 'input'
+  ctx.fillStyle = '#cfd3dc'; ctx.font = '24px serif';
+  ctx.fillText('Dein Name:', CONFIG.W/2, 320);
+  const blink = (Math.floor(Date.now()/500) % 2 === 0) ? '▊' : ' ';
+  ctx.fillStyle = '#fff'; ctx.font = '30px serif';
+  ctx.fillText((state.nameInput || '') + blink, CONFIG.W/2, 360);
+  ctx.fillStyle = '#8a8f9a'; ctx.font = '18px serif';
+  ctx.fillText('tippen · [Enter] eintragen (leer = „Broccoli")', CONFIG.W/2, 396);
+}
+function renderLeaderboard(){
+  ctx.fillStyle = '#10131f'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd23f'; ctx.font = '40px serif';
+  ctx.fillText('🏆 Rangliste', CONFIG.W/2, 90);
+  drawBoard(CONFIG.W/2, 150, state.lastEntry ? state.lastEntry.name : null);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#cfd3dc'; ctx.font = '22px serif';
+  ctx.fillText('[Enter] zum Start', CONFIG.W/2, CONFIG.H - 40);
+}
+function render(){
+  if(state.screen==='start'){ return renderStart(); }
+  if(state.screen==='win'){ return renderWin(); }
+  if(state.screen==='leaderboard'){ return renderLeaderboard(); }
+  const L = currentLevel();
+  ctx.clearRect(0,0,CONFIG.W,CONFIG.H);
+  ctx.fillStyle = L.bg; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+  if(costume().ability?.swim){ ctx.fillStyle='rgba(0,80,160,.15)'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H); }
+  const cx = state.cameraX;
+  // Boden + Plattformen
+  for(const p of L.platforms){
+    ctx.fillStyle = (p.y >= L.groundY) ? '#6b4f2a' : '#8a5a2b';
+    ctx.fillRect(p.x - cx, p.y, p.w, p.h);
+    ctx.fillStyle = '#3fa34d';
+    ctx.fillRect(p.x - cx, p.y, p.w, 8);
+  }
+  // Lava-Hazards
+  for(const hz of (L.hazards||[])){ if(hz.type==='lava'){ ctx.fillStyle='#ff5522'; ctx.fillRect(hz.x-cx,hz.y,hz.w,hz.h); } }
+  // Checkpoints
+  ctx.font = '30px serif'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  for(const c of L.checkpoints) ctx.fillText('🚩', c.x - cx, c.y + 28);
+  // Sterne
+  ctx.font = '26px serif';
+  for(const s of L.stars) ctx.fillText('🌟', s.x - cx + 14, s.y + 24);
+  // Ziel
+  ctx.font = '40px serif'; ctx.fillText('🏁', L.goalX - cx, L.groundY);
+  // Gegner
+  ctx.font = '30px serif'; ctx.textAlign='center';
+  for(const e of L.enemies){ if(e.alive) ctx.fillText(e.emoji, e.x - cx + e.w/2, e.y + e.h); }
+  // Projektile
+  ctx.font = '20px serif';
+  for(const pr of projectiles) ctx.fillText(pr.emoji, pr.x - cx, pr.y + 14);
+  // Broccoli-Spieler (kostümabhängig, blinkt bei Unverwundbarkeit)
+  if(!(invuln > 0 && Math.floor(invuln*10)%2===0)){
+    drawPlayer(player.x - cx, player.y);
+  }
+  // HUD
+  ctx.font = '22px serif'; ctx.textAlign='left';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('❤️'.repeat(state.hearts), 16, 34);
+  ctx.fillText('🌟 ' + state.score, 16, 64);
+  ctx.fillText(L.name, CONFIG.W-220, 34);
+  if(state.introTimer>0){ ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+    ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='40px serif';
+    ctx.fillText('Level '+(state.levelIndex+1)+': '+L.name, CONFIG.W/2, 240);
+    ctx.font='30px serif'; ctx.fillText(costume().emoji+' Kostüm bereit!', CONFIG.W/2, 300); }
+}
+
+// ===== 11. LOOP =====
+let last = 0;
+function loop(ts){
+  const dt = Math.min(0.033, (ts - last) / 1000 || 0);
+  last = ts;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+function update(dt){
+  if(state.screen === 'start'){
+    if(board.status === 'idle') fetchScores();
+    if(keys.has('Enter')||keys.has('Space')){ loadLevel(0); state.screen='play'; }
+    return;
+  }
+  if(state.screen === 'win' || state.screen === 'leaderboard'){ return; } // Eingaben laufen über keydown
+  if(state.screen !== 'play') return;
+  const L = currentLevel();
+  if(state.introTimer>0) state.introTimer -= dt;
+  movePlayer(dt);
+  player.cooldown = Math.max(0, (player.cooldown||0) - dt);
+  if(keys.has('KeyF')) fireWeapon();
+  updateProjectiles(dt);
+  if(invuln > 0) invuln -= dt;
+  // In Abgrund gefallen?
+  if(player.y > L.groundY + 200){ hurt(); }
+  // Checkpoint erreichen aktiviert ihn
+  for(const c of L.checkpoints){
+    if(Math.abs(player.x - c.x) < 30 && player.y < L.groundY){
+      state.activeCheckpoint = { x:c.x, y:c.y - player.h };
+    }
+  }
+  updateEnemies(dt);
+  for(const hz of (L.hazards||[])){
+    if(hz.type==='lava' && !costume().ability?.fireproof && aabb(player, hz)) hurt();
+  }
+  // Kamera folgt, geklemmt auf Weltgrenzen
+  state.cameraX = Math.max(0, Math.min(player.x + player.w/2 - CONFIG.W/2, L.worldW - CONFIG.W));
+  // Sterne einsammeln
+  L.stars = L.stars.filter(s => {
+    if(aabb(player, {x:s.x,y:s.y,w:28,h:28})){ state.score += 10; return false; }
+    return true;
+  });
+  // Ziel erreicht
+  if(player.x >= L.goalX){ nextLevel(); }
+}
+function nextLevel(){
+  if(state.levelIndex + 1 < LEVELS.length){ loadLevel(state.levelIndex + 1); }
+  else {
+    state.screen = 'win';
+    state.pendingScore = state.score;
+    state.nameInput = '';
+    state.submitState = 'input';
+    state.lastEntry = null;
+  }
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
