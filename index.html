@@ -425,10 +425,11 @@ function drawPlayer(sx, sy){
   drawHat(sx, sy, w, look);
   ctx.restore();
 }
-function centerText(lines, colorTitle){
+function centerText(lines, colorTitle, startY, lineHeight){
+  startY = startY ?? 180; lineHeight = lineHeight ?? 56;
   ctx.fillStyle='#10131f'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
   ctx.textAlign='center';
-  lines.forEach((l,i)=>{ ctx.fillStyle = i===0?colorTitle:'#e8e8e8'; ctx.font = (i===0?'54px':'26px')+' serif'; ctx.fillText(l, CONFIG.W/2, 180 + i*56); });
+  lines.forEach((l,i)=>{ ctx.fillStyle = i===0?colorTitle:'#e8e8e8'; ctx.font = (i===0?'44px':'22px')+' serif'; ctx.fillText(l, CONFIG.W/2, startY + i*lineHeight); });
 }
 // Zeichnet die Ranglisten-Box abhängig vom board-Status; highlightName wird hervorgehoben
 function drawBoard(cx, topY, highlightName){
@@ -447,7 +448,7 @@ function drawBoard(cx, topY, highlightName){
   }
   ctx.textAlign = 'left';
   board.entries.forEach((e, i) => {
-    const y = topY + 34 + i*24;
+    const y = topY + 32 + i*21;
     const isMe = highlightName && e.name === highlightName;
     ctx.fillStyle = isMe ? '#7CFC66' : '#e8e8e8';
     ctx.font = (isMe ? 'bold ' : '') + '19px serif';
@@ -459,8 +460,8 @@ function drawBoard(cx, topY, highlightName){
   ctx.textAlign = 'center';
 }
 function renderStart(){
-  centerText(['🥦 Broccoli-Quest','5 Levels · 5 Kostüme · 5 Waffen','←/→ laufen · Leertaste springen · F Waffe','[Enter] zum Starten'], '#3fa34d');
-  drawBoard(CONFIG.W/2, 300, null);
+  centerText(['🥦 Broccoli-Quest','5 Levels · 5 Kostüme · 5 Waffen','←/→ laufen · Leertaste springen · F Waffe','[Enter] zum Starten'], '#3fa34d', 96, 36);
+  drawBoard(CONFIG.W/2, 268, null);
 }
 function renderWin(){
   ctx.fillStyle = '#10131f'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
