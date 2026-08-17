@@ -29,15 +29,64 @@ const ctx = canvas.getContext('2d');
 
 // ===== 2. STATE =====
 const state = {
-  screen: 'start',      // 'start' | 'play' | 'win'
+  screen: 'start',      // 'start' | 'play' | 'win' | 'leaderboard'
   levelIndex: 0,
   hearts: 3,
   score: 0,
   cameraX: 0,
+  time: 0,              // globale Spielzeit (s) — treibt Hindernis-Phasen und Animationen
+  cooking: null,        // {t, big} während der Gekocht-Animation, sonst null
 };
+// Diese drei müssen VOR dem ersten loadLevel()-Aufruf deklariert sein (loadLevel setzt sie zurück).
+let projectiles = [];   // Spieler-Projektile
+let enemyShots  = [];   // Projektile der shooter-Gegner
+let invuln = 0;         // Sekunden Unverwundbarkeit nach Treffer
 
 // ===== 2b. LEADERBOARD STATE =====
 const board = { status: 'idle', entries: [], error: '' }; // status: idle|loading|ready|error
+
+// ===== 2c. SOUND (Web Audio, synthetisiert — keine Audio-Dateien) =====
+let audioCtx = null;
+let muted = false;
+try { muted = localStorage.getItem('broccoliQuestMuted') === '1'; } catch(err){ /* localStorage gesperrt */ }
+// Browser erlauben Audio erst nach einer Nutzereingabe -> erst dann Kontext anlegen
+function initAudio(){
+  if(audioCtx) return;
+  try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+  catch(err){ audioCtx = null; } // ohne Web Audio läuft das Spiel stumm weiter
+}
+function toggleMute(){
+  muted = !muted;
+  try { localStorage.setItem('broccoliQuestMuted', muted ? '1' : '0'); } catch(err){ /* egal */ }
+}
+// Ein Ton mit Hüllkurve; freqEnd != null => Gleiten zur Endfrequenz
+function tone(freq, dur, type, vol, delay, freqEnd){
+  if(!audioCtx || muted) return;
+  const t0 = audioCtx.currentTime + (delay || 0);
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type || 'square';
+  osc.frequency.setValueAtTime(freq, t0);
+  if(freqEnd) osc.frequency.linearRampToValueAtTime(freqEnd, t0 + dur);
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.linearRampToValueAtTime(vol ?? 0.14, t0 + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(t0); osc.stop(t0 + dur + 0.03);
+}
+function playSound(name){
+  if(!audioCtx || muted) return;
+  switch(name){
+    case 'jump':   tone(320, 0.14, 'square',   0.11, 0, 640); break;
+    case 'shoot':  tone(900, 0.06, 'sawtooth', 0.07, 0, 280); break;
+    case 'defeat': tone(430, 0.16, 'square',   0.11, 0, 110); break;
+    case 'star':   tone(880, 0.09, 'triangle', 0.13); tone(1320, 0.12, 'triangle', 0.13, 0.09); break;
+    case 'hurt':   tone(190, 0.22, 'sawtooth', 0.15, 0, 70); break;
+    case 'cook':   for(let i=0; i<6; i++) tone(130 + Math.random()*70, 0.13, 'sine', 0.12, i*0.15, 85); break;
+    case 'level':  [523,659,784].forEach((f,i)=> tone(f, 0.12, 'square', 0.12, i*0.1)); break;
+    case 'win':    [523,659,784,1046].forEach((f,i)=> tone(f, 0.18, 'square', 0.13, i*0.16)); break;
+  }
+}
 
 // ===== LEADERBOARD =====
 const SB_HEADERS = { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY };
@@ -84,8 +133,11 @@ function loadLevel(i){
   state.hearts = 3; state.cameraX = 0;
   state.activeCheckpoint = { ...L.start };
   player.x = L.start.x; player.y = L.start.y; player.vx = 0; player.vy = 0;
+  player.wallJumpTimer = 0; player.animTime = 0;
   CONFIG.GROUND_Y = L.groundY;
   state.introTimer = 2;
+  // frischer Zustand: keine Projektile, keine Unverwundbarkeit, keine Koch-Animation
+  projectiles = []; enemyShots = []; invuln = 0; state.cooking = null;
 }
 
 // ===== 3. LEVELS =====
@@ -100,11 +152,14 @@ const LEVELS = [
       {x:600, y:310, w:150, h:20},
       {x:1250,y:380, w:150, h:20},
     ],
-    hazards: [],           // Task 4 füllt Löcher/Spikes-Logik; Löcher entstehen durch Plattform-Lücken
+    hazards: [
+      {x:1500, y:462, w:60, h:18, type:'spikes'},
+    ],
     enemies: [
       {x:500, y:452, w:30, h:28, type:'walker', emoji:'🐌', dir:1, speed:60, range:120, baseX:500, alive:true},
       {x:1300,y:452, w:30, h:28, type:'walker', emoji:'🐛', dir:-1, speed:80, range:150, baseX:1300, alive:true},
-    ],           // Task 5
+      {x:700, y:452, w:30, h:28, type:'hopper', emoji:'🐸', dir:1, speed:70, range:100, baseX:700, baseY:452, hopHeight:44, hopSpeed:1.6, alive:true},
+    ],
     stars:   [{x:400,y:340},{x:660,y:260},{x:1300,y:330}],
     checkpoints: [{x:1000,y:436}],
     start: {x:60, y:420}, goalX: 2500,
@@ -117,27 +172,39 @@ const LEVELS = [
       {x:1450,y:360,w:180,h:20},{x:1780,y:300,w:160,h:20},{x:2050,y:420,w:220,h:20},
       {x:2350,y:500,w:650,h:60},
     ],
-    hazards: [],
+    hazards: [
+      {x:1250, y:-40, w:28, h:28, type:'falling', emoji:'☄️', baseY:-40, fallSpeed:230, respawnDelay:1.8, timer:0},
+      {x:2100, y:-40, w:28, h:28, type:'falling', emoji:'☄️', baseY:-40, fallSpeed:280, respawnDelay:2.4, timer:1.2},
+    ],
     enemies: [
       {x:950, y:300, w:30,h:28, type:'walker', emoji:'👾', dir:1, speed:70, range:120, baseX:950, alive:true},
       {x:1820,y:262, w:30,h:28, type:'walker', emoji:'🛸', dir:-1,speed:90, range:100, baseX:1820,alive:true},
+      {x:1600,y:300, w:30,h:28, type:'flyer', emoji:'👽', dir:1, speed:80, range:150, baseX:1600, baseY:300, floatAmp:70, floatSpeed:0.7, alive:true},
     ],
     stars: [{x:960,y:300},{x:1240,y:220},{x:1840,y:260}],
     checkpoints: [{x:1450,y:316}],
     start:{x:60,y:440}, goalX:2900,
+    env: {type:'drift', ax:40},   // schwereloser Seitwärts-Drift
   },
   {
     name: 'Korallen-Riff', costume: 'taucher', worldW: 3000, groundY: 520, bg: '#0a5c8a',
     platforms: [ {x:0,y:520,w:3000,h:40} ], // Meeresboden durchgehend
-    hazards: [],
+    hazards: [
+      {x:900,  y:502, w:60, h:18, type:'spikes', emoji:'🦔'},   // Seeigel am Meeresboden
+      {x:1800, y:502, w:60, h:18, type:'spikes', emoji:'🦔'},
+    ],
     enemies: [
-      {x:700, y:200, w:30,h:30, type:'walker', emoji:'🪼', dir:1, speed:60, range:140, baseX:700, alive:true},
+      {x:700, y:200, w:30,h:30, type:'flyer', emoji:'🪼', dir:1, speed:60, range:140, baseX:700, baseY:200, floatAmp:70, floatSpeed:0.6, alive:true},
       {x:1200,y:360, w:30,h:30, type:'walker', emoji:'🐚', dir:1, speed:50, range:120, baseX:1200,alive:true},
-      {x:1900,y:150, w:30,h:30, type:'walker', emoji:'🪼', dir:-1,speed:70, range:160, baseX:1900,alive:true},
+      {x:1900,y:150, w:30,h:30, type:'flyer', emoji:'🪼', dir:-1,speed:70, range:160, baseX:1900, baseY:150, floatAmp:90, floatSpeed:0.9, alive:true},
     ],
     stars: [{x:760,y:120},{x:1500,y:300},{x:2200,y:180}],
     checkpoints: [{x:1500,y:300}],
     start:{x:60,y:200}, goalX:2900,
+    env: {type:'current', zones:[   // Strömungen drücken seitlich
+      {x:1000, y:0, w:400, h:520, ax:-80},
+      {x:2050, y:0, w:400, h:520, ax: 70},
+    ]},
   },
   {
     name: 'Vulkan-Höhle', costume: 'feuerwehr', worldW: 3000, groundY: 500, bg: '#2a0d0d',
@@ -149,14 +216,21 @@ const LEVELS = [
       {x:520,y:520,w:180,h:40,type:'lava'},   // Lavabecken in Plattform-Lücken
       {x:1000,y:520,w:150,h:40,type:'lava'},
       {x:1450,y:520,w:150,h:40,type:'lava'},
+      {x:850, y:500, w:40, h:0,  type:'fountain', period:2.6, activeTime:1.0, phase:0,   maxH:130},
+      {x:1300,y:500, w:40, h:0,  type:'fountain', period:2.6, activeTime:1.0, phase:1.3, maxH:130},
+      {x:1700,y:-40, w:28, h:28, type:'falling', emoji:'🪨', baseY:-40, fallSpeed:270, respawnDelay:2.2, timer:0},
     ],
     enemies: [
-      {x:800, y:472, w:30,h:28, type:'walker', emoji:'🦎', dir:1, speed:70, range:100, baseX:800, alive:true},
+      {x:800, y:472, w:30,h:28, type:'chaser', emoji:'🦎', dir:1, speed:70, range:100, baseX:800, alive:true, aggroRange:230, chaseSpeed:135},
       {x:2400,y:472, w:30,h:28, type:'walker', emoji:'🔥', dir:-1,speed:60, range:150, baseX:2400,alive:true},
     ],
     stars: [{x:760,y:440},{x:1950,y:290},{x:2500,y:440}],
     checkpoints: [{x:1600,y:376}],
     start:{x:60,y:440}, goalX:2900,
+    env: {type:'heat', zones:[   // aufsteigende Hitze über den Lavabecken
+      {x:520, y:300, w:180, h:240, ay:-300},
+      {x:1450,y:300, w:150, h:240, ay:-300},
+    ]},
   },
   {
     name: 'Bambus-Tempel', costume: 'ninja', worldW: 3200, groundY: 500, bg: '#123a2a',
@@ -170,10 +244,13 @@ const LEVELS = [
     ],
     hazards: [
       {x:400,y:540,w:160,h:20,type:'lava'},{x:2500,y:540,w:100,h:20,type:'lava'},
+      {x:1300,y:326, w:34, h:34, type:'saw', baseX:1300, range:110, speed:160, dir:1},
+      {x:1540,y:260, w:50, h:0,  type:'retracting', period:2.0, activeTime:0.9, phase:0,   maxH:30},
+      {x:2350,y:440, w:50, h:0,  type:'retracting', period:2.0, activeTime:0.9, phase:1.0, maxH:30},
     ],
     enemies: [
-      {x:820, y:352, w:30,h:28, type:'walker', emoji:'🦂', dir:1, speed:90, range:80, baseX:820, alive:true},
-      {x:2050,y:312, w:30,h:28, type:'walker', emoji:'🥷', dir:-1,speed:110,range:120, baseX:2050,alive:true},
+      {x:820, y:352, w:30,h:28, type:'chaser', emoji:'🦂', dir:1, speed:90, range:80, baseX:820, alive:true, aggroRange:200, chaseSpeed:150},
+      {x:2050,y:312, w:30,h:28, type:'shooter', emoji:'🥷', dir:-1, speed:0, range:0, baseX:2050, alive:true, shootInterval:1.8, shotSpeed:280, shotEmoji:'⭐'},
     ],
     stars: [{x:820,y:320},{x:1560,y:200},{x:2360,y:380}],
     checkpoints: [{x:1500,y:216}],
@@ -194,12 +271,17 @@ const COSTUMES = {
 function costume(){ return COSTUMES[currentLevel().costume]; }
 
 // ===== 5. PLAYER (Minimalfassung) =====
-const player = { x: 100, y: 400, w: 34, h: 44, vx: 0, vy: 0, onGround: false, facing: 1 };
+const player = { x: 100, y: 400, w: 34, h: 44, vx: 0, vy: 0, onGround: false, facing: 1, animTime: 0 };
 loadLevel(0);
 
 // ===== 9. INPUT =====
 const keys = new Set();
 addEventListener('keydown', e => {
+  initAudio(); // Audio darf erst nach einer Nutzereingabe starten
+  // [M] schaltet den Sound stumm — überall verfügbar, ausser während der Namenseingabe
+  if((e.key === 'm' || e.key === 'M') && !(state.screen === 'win' && state.submitState === 'input')){
+    e.preventDefault(); toggleMute(); return;
+  }
   // Namenseingabe am Sieg-Screen
   if(state.screen === 'win' && state.submitState === 'input'){
     e.preventDefault();
@@ -236,6 +318,19 @@ function aabb(a,b){
 }
 function effGravity(){ return CONFIG.GRAVITY * (costume().ability?.gravityMul ?? 1); }
 function effJumpV(){ return CONFIG.JUMP_V * (costume().ability?.jumpMul ?? 1); }
+// Level-weite Umgebungskräfte auf den Spieler (nicht auf Gegner/Projektile).
+// drift/current: ax in px/s (seitliches Schieben) · heat: ay in px/s² (Auftrieb, negativ = nach oben)
+function applyEnv(dt){
+  const env = currentLevel().env;
+  if(!env) return;
+  if(env.type === 'drift'){
+    player.x += env.ax * dt;
+  } else if(env.type === 'current'){
+    for(const z of (env.zones || [])) if(aabb(player, z)) player.x += z.ax * dt;
+  } else if(env.type === 'heat'){
+    for(const z of (env.zones || [])) if(aabb(player, z)) player.vy += z.ay * dt;
+  }
+}
 function movePlayer(dt){
   // horizontal
   if(player.wallJumpTimer > 0){
@@ -248,6 +343,7 @@ function movePlayer(dt){
     if(right()) { player.vx =  CONFIG.MOVE_SPEED; player.facing =  1; }
     player.x += player.vx * dt;
   }
+  applyEnv(dt);
   if(costume().ability?.swim){
     // frei steuerbares Schwimmen, gedämpfte „Schwerkraft" (Auftrieb)
     const up = keys.has('ArrowUp')||keys.has('KeyW')||keys.has('Space');
@@ -295,47 +391,158 @@ function movePlayer(dt){
   const canWall   = costume().ability?.wallJump;
   const jp = jumpPressed();
   if(jp && !player.jumpHeld){
-    if(player.onGround){ player.vy = -effJumpV(); player.jumpsLeft = canDouble?1:0; }
-    else if(canWall && player.touchingWall){ player.vy = -effJumpV(); player.vx = player.touchingWall*CONFIG.MOVE_SPEED; player.facing = player.touchingWall; player.wallJumpTimer = 0.18; player.jumpsLeft = canDouble?1:0; }
-    else if(canDouble && player.jumpsLeft>0){ player.vy = -effJumpV()*0.9; player.jumpsLeft--; }
+    if(player.onGround){ player.vy = -effJumpV(); player.jumpsLeft = canDouble?1:0; playSound('jump'); }
+    else if(canWall && player.touchingWall){ player.vy = -effJumpV(); player.vx = player.touchingWall*CONFIG.MOVE_SPEED; player.facing = player.touchingWall; player.wallJumpTimer = 0.18; player.jumpsLeft = canDouble?1:0; playSound('jump'); }
+    else if(canDouble && player.jumpsLeft>0){ player.vy = -effJumpV()*0.9; player.jumpsLeft--; playSound('jump'); }
   }
   player.jumpHeld = jp;
   if(player.onGround) player.jumpsLeft = canDouble?1:0;
 }
 
-let invuln = 0; // Sekunden Unverwundbarkeit nach Treffer
 function respawn(){
   const c = state.activeCheckpoint;
   player.x = c.x; player.y = c.y; player.vx = 0; player.vy = 0; player.wallJumpTimer = 0;
 }
+// Startet die Gekocht-Animation; big = letztes Herz verloren (Topf-Variante)
+function startCooking(big){
+  state.cooking = { t: 0, big: !!big };
+  playSound('cook');
+}
 function hurt(){
-  if(invuln > 0) return;
+  if(invuln > 0 || state.cooking) return;
   state.hearts--; invuln = 1.2;
-  if(state.hearts <= 0){ loadLevel(state.levelIndex); } // ganzes Level neu
-  else { respawn(); }
+  playSound('hurt');
+  startCooking(state.hearts <= 0); // Respawn/Level-Neustart erfolgt am Ende der Animation
+}
+// Wird jeden Frame aufgerufen, solange state.cooking gesetzt ist. Friert das Spiel ein.
+function updateCooking(dt){
+  const dur = state.cooking.big ? 2.0 : 1.0;
+  state.cooking.t += dt;
+  if(state.cooking.t >= dur){
+    const wasBig = state.cooking.big;
+    state.cooking = null;
+    if(wasBig) loadLevel(state.levelIndex); // ganzes Level neu (setzt Herzen auf 3)
+    else respawn();
+  }
 }
 
 // ===== 6. ENEMIES =====
+// Horizontales Patrouillieren zwischen baseX ± range (von mehreren Typen genutzt)
+function patrol(e, dt, speed){
+  e.x += e.dir * speed * dt;
+  if(e.x > e.baseX + e.range) e.dir = -1;
+  if(e.x < e.baseX - e.range) e.dir = 1;
+}
 function updateEnemies(dt){
   const L = currentLevel();
   for(const e of L.enemies){
     if(!e.alive) continue;
-    if(e.type === 'walker'){
-      e.x += e.dir * e.speed * dt;
-      if(e.x > e.baseX + e.range) e.dir = -1;
-      if(e.x < e.baseX - e.range) e.dir = 1;
+    switch(e.type){
+      case 'walker':
+        patrol(e, dt, e.speed);
+        break;
+      case 'hopper': // patrouilliert und hüpft rhythmisch
+        patrol(e, dt, e.speed);
+        e.y = e.baseY - Math.abs(Math.sin(state.time * Math.PI * e.hopSpeed)) * e.hopHeight;
+        break;
+      case 'flyer': // schwebt, ignoriert Schwerkraft
+        patrol(e, dt, e.speed);
+        e.y = e.baseY + Math.sin(state.time * Math.PI * 2 * e.floatSpeed) * e.floatAmp;
+        break;
+      case 'chaser': { // verfolgt den Spieler in Reichweite, sonst patrouillieren
+        const dx = (player.x + player.w/2) - (e.x + e.w/2);
+        if(Math.abs(dx) < e.aggroRange){
+          e.dir = dx > 0 ? 1 : -1;
+          e.x += e.dir * e.chaseSpeed * dt;
+          // Verfolgung begrenzen, damit der Gegner sein Revier nicht verlässt
+          const limit = e.chaseLimit ?? e.range * 2.5;
+          e.x = Math.max(e.baseX - limit, Math.min(e.baseX + limit, e.x));
+        } else {
+          patrol(e, dt, e.speed);
+        }
+        break;
+      }
+      case 'shooter': // stationär, feuert in Intervallen
+        e.cooldown = (e.cooldown ?? 0) - dt;
+        if(e.cooldown <= 0){
+          e.cooldown = e.shootInterval;
+          enemyShots.push({
+            x: e.x + (e.dir > 0 ? e.w : -14), y: e.y + e.h*0.3,
+            w: 14, h: 14, dir: e.dir, speed: e.shotSpeed,
+            emoji: e.shotEmoji || '🔸', travelled: 0, range: 400,
+          });
+        }
+        break;
     }
     // Kollision mit Player = Schaden
     if(aabb(player, e)) hurt();
   }
 }
+// Projektile der shooter-Gegner (nicht abschiessbar)
+function updateEnemyShots(dt){
+  for(const s of enemyShots){
+    const step = s.speed * dt;
+    s.x += s.dir * step; s.travelled += step;
+    if(aabb(player, s)){ hurt(); s.dead = true; }
+  }
+  enemyShots = enemyShots.filter(s => !s.dead && s.travelled < s.range);
+}
+
+// ===== 6b. HAZARDS =====
+// Zeitgesteuerte Typen (fountain/retracting) sind nur im Aktivfenster gefährlich
+function hazardActive(hz){
+  if(hz.type === 'fountain' || hz.type === 'retracting'){
+    return ((state.time + (hz.phase || 0)) % hz.period) < hz.activeTime;
+  }
+  return true;
+}
+// Wie weit ist ein zeitgesteuertes Hindernis ausgefahren (0..1)?
+function hazardExtend(hz){
+  if(!hazardActive(hz)) return 0;
+  const elapsed = (state.time + (hz.phase || 0)) % hz.period;
+  return Math.min(1, elapsed / (hz.activeTime * 0.35)); // schnelles Ausfahren
+}
+// Aktuell gefährliche Fläche (fountain/retracting wachsen nach oben aus hz.y heraus)
+function hazardRect(hz){
+  if(hz.type === 'fountain' || hz.type === 'retracting'){
+    const h = hz.maxH * hazardExtend(hz);
+    return { x: hz.x, y: hz.y - h, w: hz.w, h: h };
+  }
+  return hz;
+}
+// Schadet dieses Hindernis dem aktuellen Kostüm gerade?
+function hazardDamages(hz){
+  if(!hazardActive(hz)) return false;
+  // Lava: Feuerwehr ist immun (und kann darauf laufen) — exklusiver Kostüm-Vorteil.
+  // Fontänen schaden allen: ein aktiv ausbrechender Feuerstrahl bleibt gefährlich.
+  if(hz.type === 'lava') return !costume().ability?.fireproof;
+  return true;
+}
+function updateHazards(dt){
+  const L = currentLevel();
+  for(const hz of (L.hazards || [])){
+    if(hz.type === 'saw'){
+      hz.x += hz.dir * hz.speed * dt;
+      if(hz.x > hz.baseX + hz.range) hz.dir = -1;
+      if(hz.x < hz.baseX - hz.range) hz.dir = 1;
+    } else if(hz.type === 'falling'){
+      if(hz.timer > 0){
+        hz.timer -= dt;
+        if(hz.timer <= 0) hz.y = hz.baseY; // oben neu erscheinen
+      } else {
+        hz.y += hz.fallSpeed * dt;
+        if(hz.y > L.groundY + 60){ hz.timer = hz.respawnDelay; hz.y = -9999; }
+      }
+    }
+  }
+}
 
 // ===== 7. PROJECTILES =====
-let projectiles = [];
 function fireWeapon(){
   if(player.cooldown > 0) return;
   const w = costume().weapon;
   player.cooldown = w.cooldown;
+  playSound('shoot');
   projectiles.push({
     x: player.x + (player.facing>0 ? player.w : -10), y: player.y + player.h*0.4,
     w: 18, h: 14, dir: player.facing, speed: w.speed, dmg: w.dmg,
@@ -353,7 +560,7 @@ function updateProjectiles(dt){
     } else {
       const step = pr.speed * dt; pr.x += pr.dir*step; pr.travelled += step;
     }
-    for(const e of L.enemies){ if(e.alive && aabb(pr, e)){ e.alive=false; state.score+=20; if(pr.speed!==0) pr.dead=true; } }
+    for(const e of L.enemies){ if(e.alive && aabb(pr, e)){ e.alive=false; state.score+=20; playSound('defeat'); if(pr.speed!==0) pr.dead=true; } }
   }
   projectiles = projectiles.filter(pr => !pr.dead && pr.travelled < pr.range + (pr.speed===0?100:0));
 }
@@ -397,33 +604,130 @@ function drawHat(sx, sy, w, look){
       break;
   }
 }
-// Zeichnet den Broccoli-Spieler als kostümiertes Männchen (sx/sy = Bildschirm-Position oben-links)
+// Augen im Broccoli-Kopf (Blick folgt der Laufrichtung, da im gespiegelten Kontext gezeichnet)
+function drawEyes(mid, sy){
+  const ey = sy + 10;
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath(); ctx.arc(mid - 2, ey, 3.4, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(mid + 6, ey, 3.4, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#16281a';
+  ctx.beginPath(); ctx.arc(mid - 1, ey + 0.5, 1.7, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(mid + 7, ey + 0.5, 1.7, 0, Math.PI*2); ctx.fill();
+}
+// Zeichnet den Broccoli-Spieler als kostümiertes, animiertes Männchen
+// (sx/sy = Bildschirm-Position oben-links)
 function drawPlayer(sx, sy){
-  const w = player.w, h = player.h, mid = sx + w/2;
+  const w = player.w, h = player.h;
   const look = COSTUME_LOOK[currentLevel().costume] || COSTUME_LOOK.basis;
+  const swimming = !!costume().ability?.swim;
+  const airborne = !player.onGround && !swimming;
+  const moving   = Math.abs(player.vx) > 5 && player.onGround;
+  const t = player.animTime;
+  // Idle-Wippen (nur im Stand), Schrittphase beim Laufen
+  if(!moving && !airborne) sy += Math.sin(t * 3) * 1;
+  const step = moving ? Math.sin(t * 12) : 0;
+  const mid = sx + w/2;
   ctx.save();
   if(player.facing < 0){ ctx.translate(mid*2, 0); ctx.scale(-1,1); }
   ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
   // Beine
   ctx.fillStyle = look.leg;
-  ctx.fillRect(sx+10, sy+37, 6, 7);
-  ctx.fillRect(sx+w-16, sy+37, 6, 7);
+  if(airborne){                                  // Sprung: Beine angezogen
+    ctx.fillRect(sx+11,   sy+36, 6, 6);
+    ctx.fillRect(sx+w-17, sy+34, 6, 6);
+  } else {
+    const a = step > 0 ? 3 : 0, b = step > 0 ? 0 : 3;
+    ctx.fillRect(sx+10,   sy+37, 6, 7-a);
+    ctx.fillRect(sx+w-16, sy+37, 6, 7-b);
+    ctx.fillRect(sx+9  + (step>0?2:0), sy+42, 8, 3);   // Füsse
+    ctx.fillRect(sx+w-17 - (step>0?0:2), sy+42, 8, 3);
+  }
   // Arme
   ctx.fillStyle = look.arm;
-  ctx.fillRect(sx+3, sy+22, 6, 12);
-  ctx.fillRect(sx+w-9, sy+22, 6, 12);
-  // Rumpf (Anzug)
+  if(swimming){                                  // Schwimmen: Arme seitlich ausgestreckt
+    ctx.fillRect(sx-3,   sy+20, 12, 5);
+    ctx.fillRect(sx+w-9, sy+20, 12, 5);
+  } else if(airborne){                           // Sprung: Arme oben
+    ctx.fillRect(sx+2,   sy+13, 6, 12);
+    ctx.fillRect(sx+w-8, sy+13, 6, 12);
+  } else {                                       // Laufen/Stehen: gegenläufiges Schwingen
+    const a = step * 3;
+    ctx.fillRect(sx+3,   sy+22+a, 6, 12);
+    ctx.fillRect(sx+w-9, sy+22-a, 6, 12);
+  }
+  // Rumpf mit Licht- und Schattenkante
   ctx.fillStyle = look.body;
   ctx.fillRect(sx+8, sy+20, w-16, 18);
+  ctx.fillStyle = 'rgba(255,255,255,.20)';
+  ctx.fillRect(sx+8, sy+20, w-16, 3);
+  ctx.fillStyle = 'rgba(0,0,0,.28)';
+  ctx.fillRect(sx+8, sy+35, w-16, 3);
+  ctx.fillRect(sx+w-11, sy+20, 3, 18);
   // Gürtel
   ctx.fillStyle = look.belt;
   ctx.fillRect(sx+8, sy+30, w-16, 3);
-  // Broccoli-Kopf
+  // Broccoli-Kopf + Augen
   ctx.font = '26px serif';
   ctx.fillText('🥦', mid, sy+20);
+  drawEyes(mid, sy);
   // Kostüm-Accessoire
   drawHat(sx, sy, w, look);
   ctx.restore();
+}
+// Stacheln: als Emoji-Reihe (falls angegeben) oder als graue Dreiecke
+function drawSpikes(x, y, w, h, emoji){
+  if(h <= 0) return;
+  if(emoji){
+    ctx.font = '24px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    const n = Math.max(1, Math.round(w/26));
+    for(let i=0; i<n; i++) ctx.fillText(emoji, x + (i+0.5)*(w/n), y + h + 6);
+    return;
+  }
+  ctx.fillStyle = '#c9ccd4';
+  const n = Math.max(1, Math.round(w/12));
+  for(let i=0; i<n; i++){
+    const bx = x + i*(w/n), bw = w/n;
+    ctx.beginPath();
+    ctx.moveTo(bx, y+h); ctx.lineTo(bx + bw/2, y); ctx.lineTo(bx + bw, y+h);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = '#7a7f8a'; ctx.fillRect(x, y+h-2, w, 2);
+}
+// Gekocht-Animation: Broccoli wird olivgrün, sinkt zusammen, Dampf steigt auf
+function drawCooking(sx, sy){
+  const c = state.cooking;
+  const dur = c.big ? 2.0 : 1.0;
+  const prog = Math.min(1, c.t / dur);
+  const squash = prog * (c.big ? 16 : 8);
+  const mid = sx + player.w/2;
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  if(c.big){   // Topf, in den der Broccoli sinkt
+    ctx.font = '58px serif';
+    ctx.fillText('🍲', mid, sy + 66);
+  }
+  // Broccoli (sinkt zusammen)
+  ctx.font = '26px serif';
+  ctx.fillText('🥦', mid, sy + 20 + squash);
+  // Oliv-Schleier = „gekocht"
+  ctx.globalAlpha = 0.30 + prog * 0.40;
+  ctx.fillStyle = '#6b7a33';
+  ctx.beginPath(); ctx.arc(mid, sy + 11 + squash, 13, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+  // Dampfwolken
+  for(let i=0; i<4; i++){
+    const p = (prog * 1.6 + i * 0.25) % 1;
+    ctx.globalAlpha = (1 - p) * 0.75;
+    ctx.font = (14 + p*12) + 'px serif';
+    ctx.fillText('💨', mid + Math.sin(i + prog*5) * 11, sy + 6 - p*42 + squash);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+  if(c.big){   // Schriftzug bildschirmfest
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffb84d'; ctx.font = '48px serif';
+    ctx.fillText('Gekocht!', CONFIG.W/2, 130);
+  }
 }
 function centerText(lines, colorTitle, startY, lineHeight){
   startY = startY ?? 180; lineHeight = lineHeight ?? 56;
@@ -460,7 +764,9 @@ function drawBoard(cx, topY, highlightName){
   ctx.textAlign = 'center';
 }
 function renderStart(){
-  centerText(['🥦 Broccoli-Quest','5 Levels · 5 Kostüme · 5 Waffen','←/→ laufen · Leertaste springen · F Waffe','[Enter] zum Starten'], '#3fa34d', 96, 36);
+  centerText(['🥦 Broccoli-Quest','5 Levels · 5 Kostüme · 5 Waffen',
+    '←/→ laufen · Leertaste springen · F Waffe · M Sound ' + (muted ? '🔇' : '🔊'),
+    '[Enter] zum Starten'], '#3fa34d', 96, 36);
   drawBoard(CONFIG.W/2, 268, null);
 }
 function renderWin(){
@@ -513,8 +819,44 @@ function render(){
     ctx.fillStyle = '#3fa34d';
     ctx.fillRect(p.x - cx, p.y, p.w, 8);
   }
-  // Lava-Hazards
-  for(const hz of (L.hazards||[])){ if(hz.type==='lava'){ ctx.fillStyle='#ff5522'; ctx.fillRect(hz.x-cx,hz.y,hz.w,hz.h); } }
+  // Hindernisse
+  for(const hz of (L.hazards||[])){
+    if(hz.type === 'lava'){
+      ctx.fillStyle='#ff5522'; ctx.fillRect(hz.x-cx, hz.y, hz.w, hz.h);
+      ctx.fillStyle='rgba(255,220,120,.45)'; ctx.fillRect(hz.x-cx, hz.y, hz.w, 4);
+    } else if(hz.type === 'spikes'){
+      drawSpikes(hz.x-cx, hz.y, hz.w, hz.h, hz.emoji);
+    } else if(hz.type === 'saw'){
+      ctx.save();
+      ctx.translate(hz.x-cx + hz.w/2, hz.y + hz.h/2);
+      ctx.rotate(state.time * 9);
+      ctx.font = '32px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('⚙️', 0, 0);
+      ctx.restore();
+      ctx.textBaseline = 'alphabetic';
+    } else if(hz.type === 'fountain'){
+      const r = hazardRect(hz);
+      if(r.h > 0){
+        ctx.fillStyle = 'rgba(255,120,30,.85)';
+        ctx.fillRect(r.x-cx, r.y, r.w, r.h);
+        ctx.fillStyle = 'rgba(255,220,120,.7)';
+        ctx.fillRect(r.x-cx + r.w*0.3, r.y, r.w*0.4, r.h);
+        ctx.font='26px serif'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+        ctx.fillText('🔥', r.x-cx + r.w/2, r.y + 22);
+      } else {
+        ctx.fillStyle = 'rgba(120,60,30,.7)'; ctx.fillRect(hz.x-cx, hz.y-5, hz.w, 5);
+      }
+    } else if(hz.type === 'falling'){
+      if(hz.y > -200){
+        ctx.font='28px serif'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+        ctx.fillText(hz.emoji || '☄️', hz.x-cx + hz.w/2, hz.y + hz.h);
+      }
+    } else if(hz.type === 'retracting'){
+      const r = hazardRect(hz);
+      ctx.fillStyle = '#4a4f58'; ctx.fillRect(hz.x-cx, hz.y-2, hz.w, 4);   // Sockel
+      drawSpikes(r.x-cx, r.y, r.w, r.h, null);
+    }
+  }
   // Checkpoints
   ctx.font = '30px serif'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   for(const c of L.checkpoints) ctx.fillText('🚩', c.x - cx, c.y + 28);
@@ -526,11 +868,16 @@ function render(){
   // Gegner
   ctx.font = '30px serif'; ctx.textAlign='center';
   for(const e of L.enemies){ if(e.alive) ctx.fillText(e.emoji, e.x - cx + e.w/2, e.y + e.h); }
-  // Projektile
-  ctx.font = '20px serif';
+  // Projektile (Spieler)
+  ctx.font = '20px serif'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   for(const pr of projectiles) ctx.fillText(pr.emoji, pr.x - cx, pr.y + 14);
-  // Broccoli-Spieler (kostümabhängig, blinkt bei Unverwundbarkeit)
-  if(!(invuln > 0 && Math.floor(invuln*10)%2===0)){
+  // Projektile (Gegner)
+  ctx.font = '18px serif';
+  for(const s of enemyShots) ctx.fillText(s.emoji, s.x - cx + s.w/2, s.y + s.h);
+  // Broccoli-Spieler: Koch-Animation, sonst normal (blinkt bei Unverwundbarkeit)
+  if(state.cooking){
+    drawCooking(player.x - cx, player.y);
+  } else if(!(invuln > 0 && Math.floor(invuln*10)%2===0)){
     drawPlayer(player.x - cx, player.y);
   }
   // HUD
@@ -539,6 +886,7 @@ function render(){
   ctx.fillText('❤️'.repeat(state.hearts), 16, 34);
   ctx.fillText('🌟 ' + state.score, 16, 64);
   ctx.fillText(L.name, CONFIG.W-220, 34);
+  ctx.fillText(muted ? '🔇' : '🔊', CONFIG.W-44, 64);
   if(state.introTimer>0){ ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
     ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='40px serif';
     ctx.fillText('Level '+(state.levelIndex+1)+': '+L.name, CONFIG.W/2, 240);
@@ -563,7 +911,11 @@ function update(dt){
   if(state.screen === 'win' || state.screen === 'leaderboard'){ return; } // Eingaben laufen über keydown
   if(state.screen !== 'play') return;
   const L = currentLevel();
+  state.time += dt;            // treibt Hindernis-Phasen und Gegner-Bewegungen
+  player.animTime += dt;       // treibt die Spieler-Animation
   if(state.introTimer>0) state.introTimer -= dt;
+  // Gekocht-Animation friert das Spiel ein (keine Eingaben, keine Gegner-Bewegung)
+  if(state.cooking){ updateCooking(dt); return; }
   movePlayer(dt);
   player.cooldown = Math.max(0, (player.cooldown||0) - dt);
   if(keys.has('KeyF')) fireWeapon();
@@ -578,22 +930,25 @@ function update(dt){
     }
   }
   updateEnemies(dt);
+  updateEnemyShots(dt);
+  updateHazards(dt);
   for(const hz of (L.hazards||[])){
-    if(hz.type==='lava' && !costume().ability?.fireproof && aabb(player, hz)) hurt();
+    if(hazardDamages(hz) && aabb(player, hazardRect(hz))) hurt();
   }
   // Kamera folgt, geklemmt auf Weltgrenzen
   state.cameraX = Math.max(0, Math.min(player.x + player.w/2 - CONFIG.W/2, L.worldW - CONFIG.W));
   // Sterne einsammeln
   L.stars = L.stars.filter(s => {
-    if(aabb(player, {x:s.x,y:s.y,w:28,h:28})){ state.score += 10; return false; }
+    if(aabb(player, {x:s.x,y:s.y,w:28,h:28})){ state.score += 10; playSound('star'); return false; }
     return true;
   });
   // Ziel erreicht
   if(player.x >= L.goalX){ nextLevel(); }
 }
 function nextLevel(){
-  if(state.levelIndex + 1 < LEVELS.length){ loadLevel(state.levelIndex + 1); }
+  if(state.levelIndex + 1 < LEVELS.length){ playSound('level'); loadLevel(state.levelIndex + 1); }
   else {
+    playSound('win');
     state.screen = 'win';
     state.pendingScore = state.score;
     state.nameInput = '';
