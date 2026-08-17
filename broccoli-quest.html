@@ -63,6 +63,19 @@ async function submitScore(name, score){
     return res.ok;
   } catch(err){ return false; }
 }
+function confirmName(){
+  const name = (state.nameInput.trim() || 'Broccoli').slice(0, 12);
+  state.submitState = 'sending';
+  submitScore(name, state.pendingScore).then(ok => {
+    if(ok){
+      state.lastEntry = { name, score: state.pendingScore };
+      fetchScores();
+      state.screen = 'leaderboard';
+    } else {
+      state.submitState = 'error';
+    }
+  });
+}
 
 function currentLevel(){ return LEVELS[state.levelIndex]; }
 function loadLevel(i){
@@ -473,6 +486,15 @@ function renderWin(){
   ctx.fillText((state.nameInput || '') + blink, CONFIG.W/2, 360);
   ctx.fillStyle = '#8a8f9a'; ctx.font = '18px serif';
   ctx.fillText('tippen · [Enter] eintragen (leer = „Broccoli")', CONFIG.W/2, 396);
+}
+function renderLeaderboard(){
+  ctx.fillStyle = '#10131f'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd23f'; ctx.font = '40px serif';
+  ctx.fillText('🏆 Rangliste', CONFIG.W/2, 90);
+  drawBoard(CONFIG.W/2, 150, state.lastEntry ? state.lastEntry.name : null);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#cfd3dc'; ctx.font = '22px serif';
+  ctx.fillText('[Enter] zum Start', CONFIG.W/2, CONFIG.H - 40);
 }
 function render(){
   if(state.screen==='start'){ return renderStart(); }
