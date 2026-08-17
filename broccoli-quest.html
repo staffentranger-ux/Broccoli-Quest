@@ -187,6 +187,28 @@ loadLevel(0);
 // ===== 9. INPUT =====
 const keys = new Set();
 addEventListener('keydown', e => {
+  // Namenseingabe am Sieg-Screen
+  if(state.screen === 'win' && state.submitState === 'input'){
+    e.preventDefault();
+    if(e.key === 'Enter'){ confirmName(); }
+    else if(e.key === 'Backspace'){ state.nameInput = state.nameInput.slice(0, -1); }
+    else if(/^[A-Za-z0-9 ]$/.test(e.key) && state.nameInput.length < 12){ state.nameInput += e.key; }
+    return;
+  }
+  // Sieg-Screen Fehlerzustand
+  if(state.screen === 'win' && state.submitState === 'error'){
+    e.preventDefault();
+    if(e.key === 'Enter'){ confirmName(); }
+    else if(e.key === 'Escape'){ state.lastEntry = null; fetchScores(); state.screen = 'leaderboard'; }
+    return;
+  }
+  // Rangliste-Screen: Enter -> Start
+  if(state.screen === 'leaderboard'){
+    if(e.key === 'Enter'){ e.preventDefault(); board.status = 'idle'; state.screen = 'start'; }
+    return;
+  }
+  // Start-Screen: R = Rangliste neu laden
+  if(state.screen === 'start' && (e.key === 'r' || e.key === 'R')){ e.preventDefault(); fetchScores(); return; }
   if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','KeyA','KeyD','KeyW','KeyS','KeyF','Enter'].includes(e.code)) e.preventDefault();
   keys.add(e.code);
 });
@@ -427,7 +449,31 @@ function renderStart(){
   centerText(['🥦 Broccoli-Quest','5 Levels · 5 Kostüme · 5 Waffen','←/→ laufen · Leertaste springen · F Waffe','[Enter] zum Starten'], '#3fa34d');
   drawBoard(CONFIG.W/2, 300, null);
 }
-function renderWin(){ centerText(['🏆 Geschafft!','Broccoli hat alle 5 Levels gemeistert!','Punkte: '+state.score,'[Enter] zurück zum Start'], '#ffd23f'); }
+function renderWin(){
+  ctx.fillStyle = '#10131f'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd23f'; ctx.font = '54px serif';
+  ctx.fillText('🏆 Geschafft!', CONFIG.W/2, 150);
+  ctx.fillStyle = '#e8e8e8'; ctx.font = '26px serif';
+  ctx.fillText('Broccoli hat alle 5 Levels gemeistert!', CONFIG.W/2, 205);
+  ctx.fillText('Punkte: ' + state.pendingScore, CONFIG.W/2, 250);
+  if(state.submitState === 'sending'){
+    ctx.fillStyle = '#cfd3dc'; ctx.fillText('wird gesendet …', CONFIG.W/2, 330); return;
+  }
+  if(state.submitState === 'error'){
+    ctx.fillStyle = '#e88'; ctx.fillText('⚠ Senden fehlgeschlagen', CONFIG.W/2, 320);
+    ctx.fillStyle = '#cfd3dc'; ctx.font = '22px serif';
+    ctx.fillText('[Enter] nochmal   ·   [Esc] überspringen', CONFIG.W/2, 356); return;
+  }
+  // submitState === 'input'
+  ctx.fillStyle = '#cfd3dc'; ctx.font = '24px serif';
+  ctx.fillText('Dein Name:', CONFIG.W/2, 320);
+  const blink = (Math.floor(Date.now()/500) % 2 === 0) ? '▊' : ' ';
+  ctx.fillStyle = '#fff'; ctx.font = '30px serif';
+  ctx.fillText((state.nameInput || '') + blink, CONFIG.W/2, 360);
+  ctx.fillStyle = '#8a8f9a'; ctx.font = '18px serif';
+  ctx.fillText('tippen · [Enter] eintragen (leer = „Broccoli")', CONFIG.W/2, 396);
+}
 function render(){
   if(state.screen==='start'){ return renderStart(); }
   if(state.screen==='win'){ return renderWin(); }
@@ -524,7 +570,13 @@ function update(dt){
 }
 function nextLevel(){
   if(state.levelIndex + 1 < LEVELS.length){ loadLevel(state.levelIndex + 1); }
-  else { state.screen = 'win'; }
+  else {
+    state.screen = 'win';
+    state.pendingScore = state.score;
+    state.nameInput = '';
+    state.submitState = 'input';
+    state.lastEntry = null;
+  }
 }
 requestAnimationFrame(loop);
 </script>
