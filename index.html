@@ -385,19 +385,32 @@ const LEVELS = [
 ];
 
 // ===== 4. COSTUMES =====
-// ability: {gravity?, jumpV?, doubleJump?, wallJump?, swim?, fireproof?} — Task 7–10 nutzen Felder
+// ability: {gravityMul?, jumpMul?, doubleJump?, wallJump?, swim?, swimSpeed?, fireproof?,
+//           magnet?, magnetRange?, glide?, glideFall?, slippery?, iceAccel?, iceFriction?, speedMul?}
 // weapon:  {emoji, speed, range, cooldown, dmg}  speed=0 => Nahbereich-Strahl
+// desc:    kurze Erklärung der Fähigkeit — wird in der Level-Einblendung und im HUD gezeigt,
+//          damit Spieler ihre Sonderfähigkeit überhaupt bemerken (z.B. dass Lava sie nicht tötet)
 const COSTUMES = {
-  basis:     { emoji:'🧢', ability:{gravityMul:1, jumpMul:1}, weapon:{emoji:'🧂', speed:520, range:260, cooldown:0.35, dmg:1} },
-  astronaut: { emoji:'🚀', ability:{gravityMul:0.45, jumpMul:1.15}, weapon:{emoji:'⚡', speed:700, range:520, cooldown:0.30, dmg:1} },
-  taucher:   { emoji:'🤿', ability:{swim:true, swimSpeed:200}, weapon:{emoji:'🫧', speed:480, range:300, cooldown:0.40, dmg:1} },
-  feuerwehr: { emoji:'🔥', ability:{gravityMul:1, jumpMul:1, fireproof:true}, weapon:{emoji:'💦', speed:0, range:110, cooldown:0.15, dmg:1} },
-  ninja:     { emoji:'🥷', ability:{doubleJump:true, wallJump:true}, weapon:{emoji:'⭐', speed:820, range:640, cooldown:0.25, dmg:1} },
-  magnet:    { emoji:'🧲', ability:{gravityMul:1, jumpMul:1, magnet:true, magnetRange:170}, weapon:{emoji:'🔩', speed:640, range:380, cooldown:0.28, dmg:1} },
-  gleiter:   { emoji:'🪂', ability:{gravityMul:1, jumpMul:1.05, glide:true, glideFall:90}, weapon:{emoji:'🍃', speed:560, range:420, cooldown:0.30, dmg:1} },
-  eis:       { emoji:'❄️', ability:{gravityMul:1, jumpMul:1, slippery:true, iceAccel:2.6, iceFriction:0.9}, weapon:{emoji:'🧊', speed:600, range:340, cooldown:0.32, dmg:1} },
-  blitz:     { emoji:'⚡', ability:{gravityMul:1, jumpMul:1.1, speedMul:1.7}, weapon:{emoji:'⚡', speed:980, range:700, cooldown:0.20, dmg:1} },
-  meister:   { emoji:'👑', ability:{gravityMul:0.9, jumpMul:1.15, doubleJump:true, glide:true, glideFall:120}, weapon:{emoji:'🌟', speed:900, range:720, cooldown:0.22, dmg:1} },
+  basis:     { emoji:'🧢', desc:'Solide Grundausstattung — laufen und springen',
+               ability:{gravityMul:1, jumpMul:1}, weapon:{emoji:'🧂', speed:520, range:260, cooldown:0.35, dmg:1} },
+  astronaut: { emoji:'🚀', desc:'Niedrige Schwerkraft — du springst dreimal so hoch',
+               ability:{gravityMul:0.45, jumpMul:1.15}, weapon:{emoji:'⚡', speed:700, range:520, cooldown:0.30, dmg:1} },
+  taucher:   { emoji:'🤿', desc:'Schwimmen — mit ↑/↓ frei durchs Wasser',
+               ability:{swim:true, swimSpeed:200}, weapon:{emoji:'🫧', speed:480, range:300, cooldown:0.40, dmg:1} },
+  feuerwehr: { emoji:'🔥', desc:'FEUERFEST — Lava schadet dir nicht, du kannst darauf laufen! (Fontänen aber schon)',
+               ability:{gravityMul:1, jumpMul:1, fireproof:true}, weapon:{emoji:'💦', speed:0, range:110, cooldown:0.15, dmg:1} },
+  ninja:     { emoji:'🥷', desc:'Doppelsprung + Wandsprung — an Wänden abstossen',
+               ability:{doubleJump:true, wallJump:true}, weapon:{emoji:'⭐', speed:820, range:640, cooldown:0.25, dmg:1} },
+  magnet:    { emoji:'🧲', desc:'Magnetisch — Sterne fliegen dir von selbst zu',
+               ability:{gravityMul:1, jumpMul:1, magnet:true, magnetRange:170}, weapon:{emoji:'🔩', speed:640, range:380, cooldown:0.28, dmg:1} },
+  gleiter:   { emoji:'🪂', desc:'Gleiten — Sprungtaste HALTEN, um weite Schluchten zu überqueren',
+               ability:{gravityMul:1, jumpMul:1.05, glide:true, glideFall:90}, weapon:{emoji:'🍃', speed:560, range:420, cooldown:0.30, dmg:1} },
+  eis:       { emoji:'❄️', desc:'Rutschig — du gleitest nach, also früh bremsen',
+               ability:{gravityMul:1, jumpMul:1, slippery:true, iceAccel:2.6, iceFriction:0.9}, weapon:{emoji:'🧊', speed:600, range:340, cooldown:0.32, dmg:1} },
+  blitz:     { emoji:'⚡', desc:'Blitzschnell — 1,7× Tempo, vor Kanten rechtzeitig loslassen',
+               ability:{gravityMul:1, jumpMul:1.1, speedMul:1.7}, weapon:{emoji:'⚡', speed:980, range:700, cooldown:0.20, dmg:1} },
+  meister:   { emoji:'👑', desc:'Doppelsprung UND Gleiten — die volle Meisterschaft',
+               ability:{gravityMul:0.9, jumpMul:1.15, doubleJump:true, glide:true, glideFall:120}, weapon:{emoji:'🌟', speed:900, range:720, cooldown:0.22, dmg:1} },
 };
 function costume(){ return COSTUMES[currentLevel().costume]; }
 
@@ -1083,12 +1096,19 @@ function render(){
   ctx.fillText(L.name, CONFIG.W-220, 34);
   ctx.fillText('Level ' + (state.levelIndex+1) + '/' + LEVELS.length, CONFIG.W-220, 64);
   ctx.fillText(muted ? '🔇' : '🔊', CONFIG.W-44, 94);
+  // Dauerhafter Fähigkeits-Hinweis unten — sonst bemerken Spieler ihre Sonderfähigkeit nicht
+  ctx.font = '17px serif'; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,.72)';
+  ctx.fillText(costume().emoji + '  ' + costume().desc, CONFIG.W/2, CONFIG.H - 14);
+  ctx.textAlign = 'left'; ctx.font = '22px serif'; ctx.fillStyle = '#fff';
   if(state.introTimer>0){ ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
     ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='40px serif';
-    ctx.fillText('Level '+(state.levelIndex+1)+': '+L.name, CONFIG.W/2, 220);
-    ctx.font='30px serif'; ctx.fillText(costume().emoji+' Kostüm bereit!', CONFIG.W/2, 274);
+    ctx.fillText('Level '+(state.levelIndex+1)+': '+L.name, CONFIG.W/2, 200);
+    ctx.font='30px serif'; ctx.fillText(costume().emoji+' Kostüm bereit!', CONFIG.W/2, 250);
+    // Fähigkeit gross und deutlich — das ist der Kern jedes Levels
+    ctx.font='23px serif'; ctx.fillStyle='#7CFC66';
+    ctx.fillText(costume().desc, CONFIG.W/2, 292);
     ctx.font='22px serif'; ctx.fillStyle='#cfd3dc';
-    ctx.fillText('Par-Zeit: '+par+'s — schneller = Extrapunkte', CONFIG.W/2, 316);
+    ctx.fillText('Par-Zeit: '+par+'s — schneller = Extrapunkte', CONFIG.W/2, 330);
     if(state.lastBonus){   // Ergebnis des vorherigen Levels
       ctx.font='24px serif';
       ctx.fillStyle = state.lastBonus.points > 0 ? '#7CFC66' : '#e8a33f';
