@@ -18,6 +18,8 @@ const CONFIG = {
   MOVE_SPEED: 260,      // px/s
   JUMP_V: 720,          // px/s initiale Sprunggeschwindigkeit
   GROUND_Y: 480,        // Boden-Oberkante im Tutorial (überschrieben je Level)
+  DEATH_PENALTY: 15,    // Punktabzug pro Tod (Punktestand fällt nie unter 0)
+  TIME_BONUS_PER_S: 3,  // Extrapunkte je Sekunde, die man unter der Par-Zeit bleibt
 };
 
 // ===== 1b. SUPABASE CONFIG =====
@@ -36,6 +38,8 @@ const state = {
   cameraX: 0,
   time: 0,              // globale Spielzeit (s) — treibt Hindernis-Phasen und Animationen
   cooking: null,        // {t, big} während der Gekocht-Animation, sonst null
+  levelTime: 0,         // Sekunden im aktuellen Level (für den Zeitbonus)
+  lastBonus: null,      // {points, time, par} des zuletzt beendeten Levels
 };
 // Diese drei müssen VOR dem ersten loadLevel()-Aufruf deklariert sein (loadLevel setzt sie zurück).
 let projectiles = [];   // Spieler-Projektile
@@ -136,6 +140,7 @@ function loadLevel(i){
   player.wallJumpTimer = 0; player.animTime = 0;
   CONFIG.GROUND_Y = L.groundY;
   state.introTimer = 2;
+  state.levelTime = 0;  // Zeitmessung für den Bonus startet neu
   // frischer Zustand: keine Projektile, keine Unverwundbarkeit, keine Koch-Animation
   projectiles = []; enemyShots = []; invuln = 0; state.cooking = null;
 }
@@ -162,7 +167,7 @@ const LEVELS = [
     ],
     stars:   [{x:400,y:340},{x:660,y:260},{x:1300,y:330}],
     checkpoints: [{x:1000,y:436}],
-    start: {x:60, y:420}, goalX: 2500,
+    start: {x:60, y:420}, goalX: 2500, parTime: 45,
   },
   {
     name: 'Weltraum-Station', costume: 'astronaut', worldW: 3000, groundY: 500, bg: '#0b1026',
@@ -183,7 +188,7 @@ const LEVELS = [
     ],
     stars: [{x:960,y:300},{x:1240,y:220},{x:1840,y:260}],
     checkpoints: [{x:1450,y:316}],
-    start:{x:60,y:440}, goalX:2900,
+    start:{x:60,y:440}, goalX:2900, parTime: 55,
     env: {type:'drift', ax:40},   // schwereloser Seitwärts-Drift
   },
   {
@@ -200,7 +205,7 @@ const LEVELS = [
     ],
     stars: [{x:760,y:120},{x:1500,y:300},{x:2200,y:180}],
     checkpoints: [{x:1500,y:300}],
-    start:{x:60,y:200}, goalX:2900,
+    start:{x:60,y:200}, goalX:2900, parTime: 55,
     env: {type:'current', zones:[   // Strömungen drücken seitlich
       {x:1000, y:0, w:400, h:520, ax:-80},
       {x:2050, y:0, w:400, h:520, ax: 70},
@@ -226,7 +231,7 @@ const LEVELS = [
     ],
     stars: [{x:760,y:440},{x:1950,y:290},{x:2500,y:440}],
     checkpoints: [{x:1600,y:376}],
-    start:{x:60,y:440}, goalX:2900,
+    start:{x:60,y:440}, goalX:2900, parTime: 60,
     env: {type:'heat', zones:[   // aufsteigende Hitze über den Lavabecken
       {x:520, y:300, w:180, h:240, ay:-300},
       {x:1450,y:300, w:150, h:240, ay:-300},
@@ -254,7 +259,128 @@ const LEVELS = [
     ],
     stars: [{x:820,y:320},{x:1560,y:200},{x:2360,y:380}],
     checkpoints: [{x:1500,y:216}],
-    start:{x:60,y:440}, goalX:3100,
+    start:{x:60,y:440}, goalX:3100, parTime: 70,
+  },
+  {
+    name: 'Schrottplatz', costume: 'magnet', worldW: 3000, groundY: 500, bg: '#3b3b45',
+    platforms: [
+      {x:0,y:500,w:600,h:60},
+      {x:720,y:420,w:160,h:20},
+      {x:980,y:500,w:400,h:60},
+      {x:1480,y:400,w:160,h:20},{x:1740,y:330,w:160,h:20},
+      {x:2000,y:500,w:1000,h:60},
+    ],
+    hazards: [
+      {x:1150,y:482,w:60,h:18,type:'spikes'},
+      {x:1250,y:466,w:34,h:34,type:'saw', baseX:1250, range:100, speed:170, dir:1},
+      {x:2300,y:482,w:60,h:18,type:'spikes'},
+      {x:2600,y:-40,w:28,h:28,type:'falling', emoji:'🔩', baseY:-40, fallSpeed:250, respawnDelay:1.9, timer:0},
+    ],
+    enemies: [
+      {x:300, y:472, w:30,h:28, type:'walker', emoji:'🤖', dir:1, speed:80, range:180, baseX:300, alive:true},
+      {x:1100,y:472, w:30,h:28, type:'hopper', emoji:'🔧', dir:1, speed:80, range:120, baseX:1100, baseY:472, hopHeight:46, hopSpeed:1.8, alive:true},
+      {x:2400,y:472, w:30,h:28, type:'chaser', emoji:'👹', dir:-1, speed:70, range:120, baseX:2400, alive:true, aggroRange:220, chaseSpeed:140},
+    ],
+    stars: [{x:780,y:330},{x:1560,y:300},{x:1800,y:230}],   // hoch gelegen — der Magnet hilft
+    checkpoints: [{x:1480,y:356}],
+    start:{x:60,y:440}, goalX:2900, parTime: 55,
+  },
+  {
+    name: 'Windschlucht', costume: 'gleiter', worldW: 3200, groundY: 520, bg: '#6b8cae',
+    platforms: [
+      {x:0,y:520,w:420,h:60},
+      {x:700,y:460,w:140,h:20},{x:1120,y:420,w:140,h:20},
+      {x:1560,y:380,w:140,h:20},{x:2000,y:440,w:160,h:20},
+      {x:2400,y:520,w:800,h:60},
+    ],
+    hazards: [
+      {x:1350,y:-40,w:28,h:28,type:'falling', emoji:'🪨', baseY:-40, fallSpeed:240, respawnDelay:2.0, timer:0},
+      {x:1850,y:-40,w:28,h:28,type:'falling', emoji:'🪨', baseY:-40, fallSpeed:290, respawnDelay:2.4, timer:1.0},
+      {x:2600,y:502,w:60,h:18,type:'spikes'},
+    ],
+    enemies: [
+      {x:900, y:340, w:30,h:28, type:'flyer', emoji:'🦅', dir:1, speed:90, range:160, baseX:900, baseY:340, floatAmp:60, floatSpeed:0.8, alive:true},
+      {x:1750,y:280, w:30,h:28, type:'flyer', emoji:'🦅', dir:-1,speed:100,range:180, baseX:1750, baseY:280, floatAmp:80, floatSpeed:0.6, alive:true},
+      {x:2700,y:492, w:30,h:28, type:'walker', emoji:'🐗', dir:1, speed:90, range:150, baseX:2700, alive:true},
+    ],
+    stars: [{x:840,y:380},{x:1600,y:300},{x:2100,y:360}],
+    checkpoints: [{x:1560,y:336}],
+    start:{x:60,y:460}, goalX:3100, parTime: 65,
+    env: {type:'drift', ax:20},   // Rückenwind trägt beim Gleiten
+  },
+  {
+    name: 'Gletscher', costume: 'eis', worldW: 3000, groundY: 500, bg: '#1b3a4b',
+    platforms: [
+      {x:0,y:500,w:700,h:60},{x:820,y:500,w:500,h:60},
+      {x:1440,y:420,w:220,h:20},
+      {x:1780,y:500,w:400,h:60},{x:2300,y:500,w:700,h:60},
+    ],
+    hazards: [
+      {x:1000,y:482,w:60,h:18,type:'spikes'},
+      {x:1900,y:500,w:50,h:0, type:'retracting', period:2.0, activeTime:0.9, phase:0,   maxH:30},
+      {x:2500,y:500,w:50,h:0, type:'retracting', period:2.0, activeTime:0.9, phase:1.0, maxH:30},
+      {x:2700,y:466,w:34,h:34,type:'saw', baseX:2700, range:120, speed:150, dir:1},
+    ],
+    enemies: [
+      {x:400, y:472, w:30,h:28, type:'walker', emoji:'🐧', dir:1, speed:70, range:200, baseX:400, alive:true},
+      {x:1500,y:392, w:30,h:28, type:'hopper', emoji:'⛄', dir:1, speed:60, range:80,  baseX:1500, baseY:392, hopHeight:40, hopSpeed:1.5, alive:true},
+      {x:2400,y:472, w:30,h:28, type:'chaser', emoji:'🐻', dir:-1,speed:80, range:140, baseX:2400, alive:true, aggroRange:240, chaseSpeed:150},
+    ],
+    stars: [{x:900,y:420},{x:1540,y:340},{x:2600,y:420}],
+    checkpoints: [{x:1780,y:456}],
+    start:{x:60,y:440}, goalX:2900, parTime: 70,
+  },
+  {
+    name: 'Gewitterturm', costume: 'blitz', worldW: 3400, groundY: 500, bg: '#20143a',
+    platforms: [
+      {x:0,y:500,w:500,h:60},
+      {x:620,y:440,w:180,h:20},{x:900,y:380,w:180,h:20},{x:1200,y:440,w:180,h:20},
+      {x:1500,y:500,w:600,h:60},
+      {x:2200,y:420,w:180,h:20},
+      {x:2500,y:500,w:900,h:60},
+    ],
+    hazards: [
+      {x:1700,y:482,w:60,h:18,type:'spikes'},
+      {x:1000,y:346,w:34,h:34,type:'saw', baseX:1000, range:90, speed:200, dir:1},
+      {x:2280,y:386,w:34,h:34,type:'saw', baseX:2280, range:80, speed:220, dir:-1},
+      {x:2800,y:500,w:50,h:0, type:'retracting', period:1.8, activeTime:0.8, phase:0, maxH:30},
+      {x:2950,y:-40,w:28,h:28,type:'falling', emoji:'⚡', baseY:-40, fallSpeed:320, respawnDelay:1.5, timer:0},
+    ],
+    enemies: [
+      {x:700, y:300, w:30,h:28, type:'flyer',   emoji:'🦇', dir:1, speed:110, range:200, baseX:700, baseY:300, floatAmp:70, floatSpeed:1.0, alive:true},
+      {x:1600,y:472, w:30,h:28, type:'shooter', emoji:'🌩', dir:-1, speed:0, range:0, baseX:1600, alive:true, shootInterval:1.6, shotSpeed:300, shotEmoji:'⚡'},
+      {x:2600,y:472, w:30,h:28, type:'chaser',  emoji:'👺', dir:-1, speed:90, range:150, baseX:2600, alive:true, aggroRange:250, chaseSpeed:170},
+    ],
+    stars: [{x:960,y:300},{x:1560,y:420},{x:2260,y:340}],
+    checkpoints: [{x:1500,y:456}],
+    start:{x:60,y:440}, goalX:3300, parTime: 60,
+  },
+  {
+    name: 'Gemüse-Palast', costume: 'meister', worldW: 3600, groundY: 500, bg: '#2b1b3d',
+    platforms: [
+      {x:0,y:500,w:400,h:60},
+      {x:560,y:420,w:140,h:20},{x:840,y:340,w:140,h:20},{x:1140,y:420,w:140,h:20},
+      {x:1450,y:500,w:400,h:60},
+      {x:1980,y:400,w:160,h:20},{x:2320,y:320,w:160,h:20},{x:2650,y:440,w:180,h:20},
+      {x:2980,y:500,w:620,h:60},
+    ],
+    hazards: [
+      {x:1600,y:500,w:40,h:0, type:'fountain', period:2.4, activeTime:1.0, phase:0,   maxH:120},
+      {x:1750,y:500,w:40,h:0, type:'fountain', period:2.4, activeTime:1.0, phase:1.2, maxH:120},
+      {x:1200,y:386,w:34,h:34,type:'saw', baseX:1200, range:70, speed:180, dir:1},
+      {x:2380,y:320,w:50,h:0, type:'retracting', period:1.8, activeTime:0.8, phase:0.4, maxH:30},
+      {x:3100,y:482,w:60,h:18,type:'spikes'},
+      {x:2900,y:-40,w:28,h:28,type:'falling', emoji:'☄️', baseY:-40, fallSpeed:300, respawnDelay:1.8, timer:0},
+    ],
+    enemies: [
+      {x:900, y:312, w:30,h:28, type:'flyer',   emoji:'🦋', dir:1, speed:100, range:150, baseX:900, baseY:312, floatAmp:70, floatSpeed:0.9, alive:true},
+      {x:1500,y:472, w:30,h:28, type:'chaser',  emoji:'🐉', dir:1, speed:90, range:150, baseX:1500, alive:true, aggroRange:260, chaseSpeed:170},
+      {x:2000,y:372, w:30,h:28, type:'shooter', emoji:'🧙', dir:-1, speed:0, range:0, baseX:2000, alive:true, shootInterval:1.7, shotSpeed:300, shotEmoji:'✨'},
+      {x:3200,y:472, w:30,h:28, type:'hopper',  emoji:'👾', dir:-1, speed:90, range:150, baseX:3200, baseY:472, hopHeight:50, hopSpeed:1.9, alive:true},
+    ],
+    stars: [{x:880,y:280},{x:1180,y:360},{x:2360,y:260}],
+    checkpoints: [{x:1450,y:456},{x:2320,y:276}],
+    start:{x:60,y:440}, goalX:3500, parTime: 90,
   },
 ];
 
@@ -267,6 +393,11 @@ const COSTUMES = {
   taucher:   { emoji:'🤿', ability:{swim:true, swimSpeed:200}, weapon:{emoji:'🫧', speed:480, range:300, cooldown:0.40, dmg:1} },
   feuerwehr: { emoji:'🔥', ability:{gravityMul:1, jumpMul:1, fireproof:true}, weapon:{emoji:'💦', speed:0, range:110, cooldown:0.15, dmg:1} },
   ninja:     { emoji:'🥷', ability:{doubleJump:true, wallJump:true}, weapon:{emoji:'⭐', speed:820, range:640, cooldown:0.25, dmg:1} },
+  magnet:    { emoji:'🧲', ability:{gravityMul:1, jumpMul:1, magnet:true, magnetRange:170}, weapon:{emoji:'🔩', speed:640, range:380, cooldown:0.28, dmg:1} },
+  gleiter:   { emoji:'🪂', ability:{gravityMul:1, jumpMul:1.05, glide:true, glideFall:90}, weapon:{emoji:'🍃', speed:560, range:420, cooldown:0.30, dmg:1} },
+  eis:       { emoji:'❄️', ability:{gravityMul:1, jumpMul:1, slippery:true, iceAccel:2.6, iceFriction:0.9}, weapon:{emoji:'🧊', speed:600, range:340, cooldown:0.32, dmg:1} },
+  blitz:     { emoji:'⚡', ability:{gravityMul:1, jumpMul:1.1, speedMul:1.7}, weapon:{emoji:'⚡', speed:980, range:700, cooldown:0.20, dmg:1} },
+  meister:   { emoji:'👑', ability:{gravityMul:0.9, jumpMul:1.15, doubleJump:true, glide:true, glideFall:120}, weapon:{emoji:'🌟', speed:900, range:720, cooldown:0.22, dmg:1} },
 };
 function costume(){ return COSTUMES[currentLevel().costume]; }
 
@@ -338,9 +469,19 @@ function movePlayer(dt){
     player.wallJumpTimer -= dt;
     player.x += player.vx * dt;
   } else {
-    player.vx = 0;
-    if(left())  { player.vx = -CONFIG.MOVE_SPEED; player.facing = -1; }
-    if(right()) { player.vx =  CONFIG.MOVE_SPEED; player.facing =  1; }
+    const ab = costume().ability || {};
+    const spd = CONFIG.MOVE_SPEED * (ab.speedMul ?? 1);
+    let target = 0;
+    if(left())  { target = -spd; player.facing = -1; }
+    if(right()) { target =  spd; player.facing =  1; }
+    if(ab.slippery){
+      // Eis: Trägheit statt sofortigem Stopp/Start
+      const rate = (target === 0) ? (ab.iceFriction ?? 0.9) : (ab.iceAccel ?? 2.6);
+      player.vx += (target - player.vx) * Math.min(1, rate * dt);
+      if(target === 0 && Math.abs(player.vx) < 4) player.vx = 0;
+    } else {
+      player.vx = target;
+    }
     player.x += player.vx * dt;
   }
   applyEnv(dt);
@@ -357,8 +498,12 @@ function movePlayer(dt){
     if(player.y < 0) player.y = 0;
     return; // Schwerkraft/Sprung überspringen
   }
-  // vertikal: Schwerkraft
+  // vertikal: Schwerkraft — Gleiter bremst das Fallen bei gehaltener Sprungtaste
   player.vy += effGravity() * dt;
+  const ab2 = costume().ability || {};
+  if(ab2.glide && player.vy > 0 && !player.onGround && jumpPressed()){
+    player.vy = Math.min(player.vy, ab2.glideFall ?? 90);
+  }
   player.y += player.vy * dt;
   // Plattform-Kollision (nur von oben landen)
   player.onGround = false;
@@ -411,6 +556,7 @@ function startCooking(big){
 function hurt(){
   if(invuln > 0 || state.cooking) return;
   state.hearts--; invuln = 1.2;
+  state.score = Math.max(0, state.score - CONFIG.DEATH_PENALTY); // Sterben kostet Punkte
   playSound('hurt');
   startCooking(state.hearts <= 0); // Respawn/Level-Neustart erfolgt am Ende der Animation
 }
@@ -574,6 +720,11 @@ const COSTUME_LOOK = {
   taucher:   { body:'#1f4e6b', arm:'#173c53', leg:'#0f2c3d', belt:'#12303f', hat:'mask',   acc:'#8fd8ff' },
   feuerwehr: { body:'#c0392b', arm:'#a53125', leg:'#7d2018', belt:'#f1c40f', hat:'fire',   acc:'#f4d03f' },
   ninja:     { body:'#1b1b1b', arm:'#141414', leg:'#0d0d0d', belt:'#c0392b', hat:'band',   acc:'#c0392b' },
+  magnet:    { body:'#8e44ad', arm:'#7a3b95', leg:'#5b2c6f', belt:'#d4ac0d', hat:'magnet', acc:'#e74c3c' },
+  gleiter:   { body:'#e67e22', arm:'#ca6f1e', leg:'#935116', belt:'#f7dc6f', hat:'wing',   acc:'#f5b041' },
+  eis:       { body:'#5dade2', arm:'#4a9ccc', leg:'#2e86c1', belt:'#ffffff', hat:'ice',    acc:'#d6eaf8' },
+  blitz:     { body:'#f4d03f', arm:'#d4ac0d', leg:'#9a7d0a', belt:'#2c3e50', hat:'bolt',   acc:'#ffffff' },
+  meister:   { body:'#2ecc71', arm:'#28b463', leg:'#1d8348', belt:'#f1c40f', hat:'crown',  acc:'#f1c40f' },
 };
 // Zeichnet das Kostüm-Accessoire auf/um den Broccoli-Kopf (facing bereits normalisiert nach rechts)
 function drawHat(sx, sy, w, look){
@@ -601,6 +752,39 @@ function drawHat(sx, sy, w, look){
       ctx.fillRect(sx+4, sy+7, w-8, 4);
       ctx.fillRect(sx-4, sy+7, 8, 3);
       ctx.fillRect(sx-7, sy+11, 8, 3);
+      break;
+    case 'magnet': // Hufeisenmagnet auf dem Kopf
+      ctx.fillRect(sx+7, sy+1, 5, 9);
+      ctx.fillRect(sx+w-12, sy+1, 5, 9);
+      ctx.fillRect(sx+7, sy+8, w-14, 4);
+      break;
+    case 'wing': // Gleitschirm-Flügel seitlich
+      ctx.fillRect(sx+4, sy+4, w-8, 4);
+      ctx.fillRect(sx-6, sy+6, 10, 3);
+      ctx.fillRect(sx+w-4, sy+6, 10, 3);
+      break;
+    case 'ice': // Eiskristall-Zacken
+      for(let i=0; i<4; i++){
+        const bx = sx + 6 + i*((w-14)/3);
+        ctx.beginPath(); ctx.moveTo(bx, sy+9); ctx.lineTo(bx+3, sy+1); ctx.lineTo(bx+6, sy+9);
+        ctx.closePath(); ctx.fill();
+      }
+      break;
+    case 'bolt': { // Blitz-Zacke über dem Kopf
+      const m = sx + w/2;
+      ctx.beginPath();
+      ctx.moveTo(m-4, sy+11); ctx.lineTo(m+3, sy);   ctx.lineTo(m+1, sy+6);
+      ctx.lineTo(m+7, sy+4);  ctx.lineTo(m-1, sy+14); ctx.lineTo(m+1, sy+8);
+      ctx.closePath(); ctx.fill();
+      break;
+    }
+    case 'crown': // Krone
+      ctx.fillRect(sx+5, sy+7, w-10, 4);
+      for(let i=0; i<3; i++){
+        const bx = sx + 6 + i*((w-16)/2);
+        ctx.beginPath(); ctx.moveTo(bx, sy+7); ctx.lineTo(bx+4, sy); ctx.lineTo(bx+8, sy+7);
+        ctx.closePath(); ctx.fill();
+      }
       break;
   }
 }
@@ -764,7 +948,7 @@ function drawBoard(cx, topY, highlightName){
   ctx.textAlign = 'center';
 }
 function renderStart(){
-  centerText(['🥦 Broccoli-Quest','5 Levels · 5 Kostüme · 5 Waffen',
+  centerText(['🥦 Broccoli-Quest', LEVELS.length + ' Levels · ' + LEVELS.length + ' Kostüme · Zeitbonus für Tempo',
     '←/→ laufen · Leertaste springen · F Waffe · M Sound ' + (muted ? '🔇' : '🔊'),
     '[Enter] zum Starten'], '#3fa34d', 96, 36);
   drawBoard(CONFIG.W/2, 268, null);
@@ -775,8 +959,14 @@ function renderWin(){
   ctx.fillStyle = '#ffd23f'; ctx.font = '54px serif';
   ctx.fillText('🏆 Geschafft!', CONFIG.W/2, 150);
   ctx.fillStyle = '#e8e8e8'; ctx.font = '26px serif';
-  ctx.fillText('Broccoli hat alle 5 Levels gemeistert!', CONFIG.W/2, 205);
+  ctx.fillText('Broccoli hat alle ' + LEVELS.length + ' Levels gemeistert!', CONFIG.W/2, 205);
   ctx.fillText('Punkte: ' + state.pendingScore, CONFIG.W/2, 250);
+  if(state.lastBonus){
+    ctx.fillStyle = '#7CFC66'; ctx.font = '20px serif';
+    ctx.fillText('Letztes Level in ' + state.lastBonus.time.toFixed(1) + 's  ·  Zeitbonus +' + state.lastBonus.points,
+                 CONFIG.W/2, 282);
+    ctx.fillStyle = '#e8e8e8'; ctx.font = '26px serif';
+  }
   if(state.submitState === 'sending'){
     ctx.fillStyle = '#cfd3dc'; ctx.fillText('wird gesendet …', CONFIG.W/2, 330); return;
   }
@@ -885,12 +1075,27 @@ function render(){
   ctx.fillStyle = '#fff';
   ctx.fillText('❤️'.repeat(state.hearts), 16, 34);
   ctx.fillText('🌟 ' + state.score, 16, 64);
+  // Level-Uhr: grün solange unter der Par-Zeit (dann gibt es Bonus)
+  const par = L.parTime ?? 60;
+  ctx.fillStyle = state.levelTime <= par ? '#7CFC66' : '#e88';
+  ctx.fillText('⏱ ' + state.levelTime.toFixed(1) + 's / ' + par + 's', 16, 94);
+  ctx.fillStyle = '#fff';
   ctx.fillText(L.name, CONFIG.W-220, 34);
-  ctx.fillText(muted ? '🔇' : '🔊', CONFIG.W-44, 64);
+  ctx.fillText('Level ' + (state.levelIndex+1) + '/' + LEVELS.length, CONFIG.W-220, 64);
+  ctx.fillText(muted ? '🔇' : '🔊', CONFIG.W-44, 94);
   if(state.introTimer>0){ ctx.fillStyle='rgba(0,0,0,.45)'; ctx.fillRect(0,0,CONFIG.W,CONFIG.H);
     ctx.textAlign='center'; ctx.fillStyle='#fff'; ctx.font='40px serif';
-    ctx.fillText('Level '+(state.levelIndex+1)+': '+L.name, CONFIG.W/2, 240);
-    ctx.font='30px serif'; ctx.fillText(costume().emoji+' Kostüm bereit!', CONFIG.W/2, 300); }
+    ctx.fillText('Level '+(state.levelIndex+1)+': '+L.name, CONFIG.W/2, 220);
+    ctx.font='30px serif'; ctx.fillText(costume().emoji+' Kostüm bereit!', CONFIG.W/2, 274);
+    ctx.font='22px serif'; ctx.fillStyle='#cfd3dc';
+    ctx.fillText('Par-Zeit: '+par+'s — schneller = Extrapunkte', CONFIG.W/2, 316);
+    if(state.lastBonus){   // Ergebnis des vorherigen Levels
+      ctx.font='24px serif';
+      ctx.fillStyle = state.lastBonus.points > 0 ? '#7CFC66' : '#e8a33f';
+      ctx.fillText('Vorheriges Level: '+state.lastBonus.time.toFixed(1)+'s  ·  Zeitbonus +'+state.lastBonus.points,
+                   CONFIG.W/2, 368);
+    }
+  }
 }
 
 // ===== 11. LOOP =====
@@ -905,7 +1110,10 @@ function loop(ts){
 function update(dt){
   if(state.screen === 'start'){
     if(board.status === 'idle') fetchScores();
-    if(keys.has('Enter')||keys.has('Space')){ loadLevel(0); state.screen='play'; }
+    if(keys.has('Enter')||keys.has('Space')){
+      state.score = 0; state.lastBonus = null;   // neuer Durchlauf startet bei 0
+      loadLevel(0); state.screen='play';
+    }
     return;
   }
   if(state.screen === 'win' || state.screen === 'leaderboard'){ return; } // Eingaben laufen über keydown
@@ -914,6 +1122,7 @@ function update(dt){
   state.time += dt;            // treibt Hindernis-Phasen und Gegner-Bewegungen
   player.animTime += dt;       // treibt die Spieler-Animation
   if(state.introTimer>0) state.introTimer -= dt;
+  else state.levelTime += dt;  // Zeitmessung erst nach der Level-Einblendung
   // Gekocht-Animation friert das Spiel ein (keine Eingaben, keine Gegner-Bewegung)
   if(state.cooking){ updateCooking(dt); return; }
   movePlayer(dt);
@@ -937,6 +1146,17 @@ function update(dt){
   }
   // Kamera folgt, geklemmt auf Weltgrenzen
   state.cameraX = Math.max(0, Math.min(player.x + player.w/2 - CONFIG.W/2, L.worldW - CONFIG.W));
+  // Magnet-Kostüm zieht Sterne in Reichweite an
+  const mag = costume().ability;
+  if(mag?.magnet){
+    const range = mag.magnetRange ?? 170;
+    const pcx = player.x + player.w/2, pcy = player.y + player.h/2;
+    for(const s of L.stars){
+      const dx = pcx - (s.x + 14), dy = pcy - (s.y + 14);
+      const d = Math.hypot(dx, dy);
+      if(d < range && d > 0.5){ const pull = 300 * dt; s.x += (dx/d)*pull; s.y += (dy/d)*pull; }
+    }
+  }
   // Sterne einsammeln
   L.stars = L.stars.filter(s => {
     if(aabb(player, {x:s.x,y:s.y,w:28,h:28})){ state.score += 10; playSound('star'); return false; }
@@ -945,7 +1165,17 @@ function update(dt){
   // Ziel erreicht
   if(player.x >= L.goalX){ nextLevel(); }
 }
+// Zeitbonus: je Sekunde unter der Par-Zeit gibt es Extrapunkte
+function awardTimeBonus(){
+  const L = currentLevel();
+  const par = L.parTime ?? 60;
+  const points = Math.max(0, Math.round((par - state.levelTime) * CONFIG.TIME_BONUS_PER_S));
+  state.score += points;
+  state.lastBonus = { points, time: state.levelTime, par };
+  return points;
+}
 function nextLevel(){
+  awardTimeBonus();
   if(state.levelIndex + 1 < LEVELS.length){ playSound('level'); loadLevel(state.levelIndex + 1); }
   else {
     playSound('win');
