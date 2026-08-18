@@ -93,6 +93,7 @@ function playSound(name){
     case 'level':  [523,659,784].forEach((f,i)=> tone(f, 0.12, 'square', 0.12, i*0.1)); break;
     case 'win':    [523,659,784,1046].forEach((f,i)=> tone(f, 0.18, 'square', 0.13, i*0.16)); break;
     case 'warn':   tone(760, 0.09, 'square', 0.10); break;   // Anzug wird zu heiss
+    case 'checkpoint': tone(660, 0.10, 'triangle', 0.12); tone(990, 0.14, 'triangle', 0.12, 0.10); break;
   }
 }
 
@@ -1095,7 +1096,20 @@ function render(){
   }
   // Checkpoints
   ctx.font = '30px serif'; ctx.textAlign='center'; ctx.textBaseline='alphabetic';
-  for(const c of L.checkpoints) ctx.fillText('🚩', c.x - cx, c.y + 28);
+  // Erreichte Checkpoints leuchten grün und werden markiert — sonst weiss man nie, ob es geklappt hat
+  for(const c of L.checkpoints){
+    const erreicht = c.x <= state.activeCheckpoint.x;
+    if(erreicht){
+      ctx.save();
+      ctx.globalAlpha = 0.28 + Math.sin(state.time*3)*0.10;
+      ctx.fillStyle = '#7CFC66';
+      ctx.beginPath(); ctx.arc(c.x - cx, c.y + 16, 26, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+    ctx.globalAlpha = erreicht ? 1 : 0.55;
+    ctx.fillText('🚩', c.x - cx, c.y + 28);
+    ctx.globalAlpha = 1;
+  }
   // Sterne
   ctx.font = '26px serif';
   for(const s of L.stars) ctx.fillText('🌟', s.x - cx + 14, s.y + 24);
@@ -1212,10 +1226,14 @@ function update(dt){
   if(invuln > 0) invuln -= dt;
   // In Abgrund gefallen?
   if(player.y > L.groundY + 200){ hurt(); }
-  // Checkpoint erreichen aktiviert ihn
+  // Checkpoint gilt als erreicht, sobald der Spieler daran VORBEI ist.
+  // (Früher wurde ein 60px schmales Fenster geprüft — wer die Fahne übersprang
+  //  oder dahinter landete, verpasste den Checkpoint zufällig.)
+  // c.y ist bereits die Stand-Höhe, darf also NICHT nochmal um player.h reduziert werden.
   for(const c of L.checkpoints){
-    if(Math.abs(player.x - c.x) < 30 && player.y < L.groundY){
-      state.activeCheckpoint = { x:c.x, y:c.y - player.h };
+    if(player.x + player.w >= c.x && c.x > state.activeCheckpoint.x){
+      state.activeCheckpoint = { x: c.x, y: c.y };
+      playSound('checkpoint');
     }
   }
   updateEnemies(dt);
