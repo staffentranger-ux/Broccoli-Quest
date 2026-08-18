@@ -72,7 +72,7 @@ Die Uhr im HUD ist **grün**, solange du unter der Par-Zeit liegst — dann gibt
 | 1 | 🧢 Basis | Der Garten | Laufen + Springen | 🧂 Salz-Streuer | 45s |
 | 2 | 🚀 Astronaut | Weltraum-Station | Niedrige Schwerkraft (hohe Sprünge) | ⚡ Laser | 55s |
 | 3 | 🤿 Taucher | Korallen-Riff | Schwimmen (frei hoch/runter) | 🫧 Blasen-Kanone | 55s |
-| 4 | 🔥 Feuerwehr | Vulkan-Höhle | **Feuerfest** — läuft über Lava | 💦 Wasserstrahl | 60s |
+| 4 | 🔥 Feuerwehr | Vulkan-Höhle | **Feuerfest** — läuft über Lava (max. 3s am Stück) | 💦 Wasserstrahl | 60s |
 | 5 | 🥷 Ninja | Bambus-Tempel | Doppelsprung + Wandsprung | ⭐ Wurfstern | 70s |
 | 6 | 🧲 Magnet | Schrottplatz | Zieht Sterne magnetisch an | 🔩 Schraube | 55s |
 | 7 | 🪂 Gleiter | Windschlucht | **Gleiten** (Sprungtaste halten) | 🍃 Blattwirbel | 65s |
@@ -96,7 +96,7 @@ Die Uhr im HUD ist **grün**, solange du unter der Par-Zeit liegst — dann gibt
 
 - **Astronaut:** Die weit auseinanderliegenden Plattformen erreichst du nur mit den hohen, schwebenden Sprüngen.
 - **Taucher:** Mit ↑/↓ frei schwimmen, um Quallen und Seeigeln auszuweichen.
-- **Feuerwehr:** Lauf ruhig über die Lava — nur die Feuerwehr kann das! Feuerfontänen schaden aber trotzdem.
+- **Feuerwehr:** Du kannst über Lava laufen — aber der Anzug hält nur **3 Sekunden**! Eine Leiste oben zeigt, wie lange noch. Ausserhalb der Lava kühlt er doppelt so schnell wieder ab, also zwischendurch auf festen Boden retten. Feuerfontänen schaden dir trotzdem sofort.
 - **Ninja:** In der Luft nochmals springen (Doppelsprung); an einer Wand + Sprungtaste stösst du dich seitlich ab, um hohe Wände zu überwinden.
 - **Magnet:** Sterne kommen von selbst — lauf einfach nah genug vorbei.
 - **Gleiter:** Sprungtaste **gedrückt halten**, um weite Schluchten zu überqueren. Ohne Gleiten schaffst du sie nicht.

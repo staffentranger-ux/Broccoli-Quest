@@ -20,6 +20,8 @@ const CONFIG = {
   GROUND_Y: 480,        // Boden-Oberkante im Tutorial (überschrieben je Level)
   DEATH_PENALTY: 15,    // Punktabzug pro Tod (Punktestand fällt nie unter 0)
   TIME_BONUS_PER_S: 3,  // Extrapunkte je Sekunde, die man unter der Par-Zeit bleibt
+  LAVA_MAX_TIME: 3,     // Sekunden, die der Feuerwehr-Anzug in der Lava aushält
+  LAVA_COOL_RATE: 2,    // wie schnell der Anzug ausserhalb der Lava wieder abkühlt (× Echtzeit)
 };
 
 // ===== 1b. SUPABASE CONFIG =====
@@ -40,6 +42,7 @@ const state = {
   cooking: null,        // {t, big} während der Gekocht-Animation, sonst null
   levelTime: 0,         // Sekunden im aktuellen Level (für den Zeitbonus)
   lastBonus: null,      // {points, time, par} des zuletzt beendeten Levels
+  lavaTime: 0,          // wie lange der Feuerwehr-Anzug schon in der Lava glüht (0..LAVA_MAX_TIME)
 };
 // Diese drei müssen VOR dem ersten loadLevel()-Aufruf deklariert sein (loadLevel setzt sie zurück).
 let projectiles = [];   // Spieler-Projektile
@@ -89,6 +92,7 @@ function playSound(name){
     case 'cook':   for(let i=0; i<6; i++) tone(130 + Math.random()*70, 0.13, 'sine', 0.12, i*0.15, 85); break;
     case 'level':  [523,659,784].forEach((f,i)=> tone(f, 0.12, 'square', 0.12, i*0.1)); break;
     case 'win':    [523,659,784,1046].forEach((f,i)=> tone(f, 0.18, 'square', 0.13, i*0.16)); break;
+    case 'warn':   tone(760, 0.09, 'square', 0.10); break;   // Anzug wird zu heiss
   }
 }
 
@@ -142,7 +146,7 @@ function loadLevel(i){
   state.introTimer = 2;
   state.levelTime = 0;  // Zeitmessung für den Bonus startet neu
   // frischer Zustand: keine Projektile, keine Unverwundbarkeit, keine Koch-Animation
-  projectiles = []; enemyShots = []; invuln = 0; state.cooking = null;
+  projectiles = []; enemyShots = []; invuln = 0; state.cooking = null; state.lavaTime = 0;
 }
 
 // ===== 3. LEVELS =====
@@ -397,7 +401,7 @@ const COSTUMES = {
                ability:{gravityMul:0.45, jumpMul:1.15}, weapon:{emoji:'⚡', speed:700, range:520, cooldown:0.30, dmg:1} },
   taucher:   { emoji:'🤿', desc:'Schwimmen — mit ↑/↓ frei durchs Wasser',
                ability:{swim:true, swimSpeed:200}, weapon:{emoji:'🫧', speed:480, range:300, cooldown:0.40, dmg:1} },
-  feuerwehr: { emoji:'🔥', desc:'FEUERFEST — Lava schadet dir nicht, du kannst darauf laufen! (Fontänen aber schon)',
+  feuerwehr: { emoji:'🔥', desc:'FEUERFEST — du kannst über Lava laufen, aber der Anzug hält nur 3 Sekunden!',
                ability:{gravityMul:1, jumpMul:1, fireproof:true}, weapon:{emoji:'💦', speed:0, range:110, cooldown:0.15, dmg:1} },
   ninja:     { emoji:'🥷', desc:'Doppelsprung + Wandsprung — an Wänden abstossen',
                ability:{doubleJump:true, wallJump:true}, weapon:{emoji:'⭐', speed:820, range:640, cooldown:0.25, dmg:1} },
@@ -560,6 +564,7 @@ function movePlayer(dt){
 function respawn(){
   const c = state.activeCheckpoint;
   player.x = c.x; player.y = c.y; player.vx = 0; player.vy = 0; player.wallJumpTimer = 0;
+  state.lavaTime = 0;   // am Checkpoint ist der Anzug wieder kühl
 }
 // Startet die Gekocht-Animation; big = letztes Herz verloren (Topf-Variante)
 function startCooking(big){
@@ -676,6 +681,34 @@ function hazardDamages(hz){
   // Fontänen schaden allen: ein aktiv ausbrechender Feuerstrahl bleibt gefährlich.
   if(hz.type === 'lava') return !costume().ability?.fireproof;
   return true;
+}
+// Steht oder steckt der Spieler gerade in Lava?
+// Wichtig: Wer OBEN AUF der Lava steht, überlappt sie nicht (Füsse liegen exakt auf der
+// Oberkante) — dieser Fall wird darum zusätzlich geprüft.
+function onLava(){
+  const foot = player.y + player.h;
+  for(const hz of (currentLevel().hazards || [])){
+    if(hz.type !== 'lava') continue;
+    if(!(player.x < hz.x + hz.w && player.x + player.w > hz.x)) continue;  // horizontal daneben
+    if(aabb(player, hz)) return true;                                      // steckt drin
+    if(player.onGround && Math.abs(foot - hz.y) < 3) return true;          // steht drauf
+  }
+  return false;
+}
+// Der Feuerwehr-Anzug hält die Hitze nur begrenzt aus: LAVA_MAX_TIME Sekunden,
+// danach stirbt der Broccoli trotzdem. Ausserhalb der Lava kühlt der Anzug wieder ab.
+function updateLavaHeat(dt){
+  if(!costume().ability?.fireproof){ state.lavaTime = 0; return; }
+  if(onLava()){
+    const before = state.lavaTime;
+    state.lavaTime += dt;
+    // Warnton in der letzten Sekunde, einmal pro halber Sekunde
+    const warnFrom = CONFIG.LAVA_MAX_TIME - 1;
+    if(state.lavaTime > warnFrom && Math.floor(state.lavaTime*2) !== Math.floor(before*2)) playSound('warn');
+    if(state.lavaTime >= CONFIG.LAVA_MAX_TIME){ state.lavaTime = 0; hurt(); }
+  } else {
+    state.lavaTime = Math.max(0, state.lavaTime - dt * CONFIG.LAVA_COOL_RATE);
+  }
 }
 function updateHazards(dt){
   const L = currentLevel();
@@ -1082,6 +1115,18 @@ function render(){
     drawCooking(player.x - cx, player.y);
   } else if(!(invuln > 0 && Math.floor(invuln*10)%2===0)){
     drawPlayer(player.x - cx, player.y);
+    // Glüht auf, je heisser der Anzug wird
+    if(state.lavaTime > 0.02){
+      const frac = Math.min(1, state.lavaTime / CONFIG.LAVA_MAX_TIME);
+      ctx.save();
+      ctx.globalAlpha = frac * 0.55;
+      ctx.fillStyle = '#ff3b1f';
+      ctx.fillRect(player.x - cx + 6, player.y + 6, player.w - 12, player.h - 8);
+      ctx.globalAlpha = frac * 0.8; ctx.font = (12 + frac*10) + 'px serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+      ctx.fillText('💨', player.x - cx + player.w/2 + Math.sin(state.time*8)*6, player.y - 4);
+      ctx.restore();
+    }
   }
   // HUD
   ctx.font = '22px serif'; ctx.textAlign='left';
@@ -1096,6 +1141,21 @@ function render(){
   ctx.fillText(L.name, CONFIG.W-220, 34);
   ctx.fillText('Level ' + (state.levelIndex+1) + '/' + LEVELS.length, CONFIG.W-220, 64);
   ctx.fillText(muted ? '🔇' : '🔊', CONFIG.W-44, 94);
+  // Hitze-Anzeige des Feuerwehr-Anzugs (nur sichtbar, wenn er sich aufheizt)
+  if(state.lavaTime > 0.02){
+    const frac = Math.min(1, state.lavaTime / CONFIG.LAVA_MAX_TIME);
+    const bw = 260, bh = 18, bx = CONFIG.W/2 - bw/2, by = 20;
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(bx-3, by-3, bw+6, bh+6);
+    ctx.fillStyle = frac > 0.66 ? '#ff3b1f' : (frac > 0.33 ? '#ff8c1a' : '#ffd23f');
+    ctx.fillRect(bx, by, bw * (1-frac), bh);          // verbleibender Schutz
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
+    ctx.textAlign = 'center'; ctx.font = 'bold 16px serif';
+    // in der letzten Sekunde blinkt die Warnung
+    const crit = state.lavaTime > CONFIG.LAVA_MAX_TIME - 1;
+    ctx.fillStyle = (crit && Math.floor(state.time*6)%2===0) ? '#ff3b1f' : '#fff';
+    ctx.fillText('🔥 Anzug hält noch ' + Math.max(0, CONFIG.LAVA_MAX_TIME - state.lavaTime).toFixed(1) + 's',
+                 CONFIG.W/2, by + bh + 18);
+  }
   // Dauerhafter Fähigkeits-Hinweis unten — sonst bemerken Spieler ihre Sonderfähigkeit nicht
   ctx.font = '17px serif'; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(255,255,255,.72)';
   ctx.fillText(costume().emoji + '  ' + costume().desc, CONFIG.W/2, CONFIG.H - 14);
@@ -1161,6 +1221,7 @@ function update(dt){
   updateEnemies(dt);
   updateEnemyShots(dt);
   updateHazards(dt);
+  updateLavaHeat(dt);
   for(const hz of (L.hazards||[])){
     if(hazardDamages(hz) && aabb(player, hazardRect(hz))) hurt();
   }
